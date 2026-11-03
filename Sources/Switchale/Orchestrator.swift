@@ -7,7 +7,11 @@ final class Orchestrator {
     private var core = SwitcherCore()
     private let source = WindowSource()
     private let activator = WindowActivator()
+    private let panel = SwitcherPanel()
     private var activationTimer: Timer?
+    /// Mientras el panel está visible se refresca la foto, para que las Windows que se cierran
+    /// salgan de la grilla.
+    private var panelRefreshTimer: Timer?
     private var tap: EventTap?
     private var focus: FocusTracker?
 
@@ -43,25 +47,50 @@ final class Orchestrator {
             case .startActivationTimer(let milliseconds):
                 activationTimer?.invalidate()
                 activationTimer = Timer.scheduledTimer(withTimeInterval: Double(milliseconds) / 1000, repeats: false) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.dispatch(.activationDelayElapsed) }
+                    MainActor.assumeIsolated { _ = self?.dispatch(.activationDelayElapsed) }
                 }
             case .cancelActivationTimer:
                 activationTimer?.invalidate()
                 activationTimer = nil
             case .activate(let id):
-                if let handle = source.handles[id] {
-                    activator.activate(handle)
+                // Si la Window ya no existe (se cerró después de la última foto), no se hace nada
+                // más que pedir una foto nueva.
+                if let handle = source.handles[id], activator.activate(handle) {
                     dispatch(.windowFocused(id))
+                } else {
+                    scheduleSnapshotRefresh()
                 }
             case .refreshSnapshot:
-                // Fuera del callback del tap: la foto completa es lenta y el tap tiene timeout.
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated { self?.refreshSnapshot() }
-                }
+                scheduleSnapshotRefresh()
             case .consumeEvent:
                 consume = true
+            case .showPanel(let items, let selected):
+                panel.show(items, selected: selected)
+                startPanelRefresh()
+            case .updatePanel(let items, let selected):
+                panel.update(items, selected: selected)
+            case .selectItem(let index):
+                panel.select(index)
+            case .hidePanel:
+                panel.hide()
+                panelRefreshTimer?.invalidate()
+                panelRefreshTimer = nil
             }
         }
         return consume
+    }
+
+    /// Fuera del callback del tap: la foto completa es lenta y el tap tiene timeout.
+    private func scheduleSnapshotRefresh() {
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.refreshSnapshot() }
+        }
+    }
+
+    private func startPanelRefresh() {
+        panelRefreshTimer?.invalidate()
+        panelRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSnapshot() }
+        }
     }
 }

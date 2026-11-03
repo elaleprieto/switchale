@@ -4,9 +4,12 @@ import ApplicationServices
 /// Ejecuta el efecto "activar Window": restaura, muestra la App, sube solo esa Window y le da foco.
 @MainActor
 struct WindowActivator {
-    func activate(_ handle: WindowHandle) {
+    /// Devuelve false sin tocar nada si la Window o su App ya no existen.
+    @discardableResult
+    func activate(_ handle: WindowHandle) -> Bool {
         let element = handle.element
         let app = handle.app
+        guard !app.isTerminated, axAttribute(element, kAXRoleAttribute) != nil else { return false }
         if axIsMinimized(element) {
             AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
@@ -23,5 +26,6 @@ struct WindowActivator {
         AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
         NSApplication.shared.yieldActivation(to: app)
         app.activate(from: NSRunningApplication.current, options: [])
+        return true
     }
 }
