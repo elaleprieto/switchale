@@ -13,17 +13,20 @@ func win(
     )
 }
 
-func snapshot(_ windows: [Window]) -> Snapshot {
-    Snapshot(
+/// Foto con las Windows dadas y las Windowless Apps indicadas (por id de App).
+func snapshot(_ windows: [Window], windowless: [Int] = []) -> Snapshot {
+    let appIDs = Set(windows.map(\.appID)).union(windowless.map { AppID($0) })
+    return Snapshot(
         windows: windows,
-        apps: Set(windows.map(\.appID)).map { AppInfo(id: $0, name: "app\($0.rawValue)") },
-        currentScreen: mainScreen
+        apps: appIDs.map { AppInfo(id: $0, name: "app\($0.rawValue)") },
+        currentScreen: mainScreen,
+        windowlessApps: windowless.map { AppID($0) }
     )
 }
 
-func core(_ windows: [Window], config: SwitcherConfig = .init()) -> SwitcherCore {
+func core(_ windows: [Window], windowless: [Int] = [], config: SwitcherConfig = .init()) -> SwitcherCore {
     var core = SwitcherCore(config: config)
-    _ = core.send(.snapshot(snapshot(windows)))
+    _ = core.send(.snapshot(snapshot(windows, windowless: windowless)))
     return core
 }
 

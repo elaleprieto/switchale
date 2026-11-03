@@ -88,8 +88,6 @@ public struct SwitcherState: Sendable {
         /// Windowless Apps, después de todas las Windows.
         var windowless: [AppID]
         var selected: Int
-        /// El usuario movió la selección (⇥/⇧⇥) en esta sesión.
-        var moved = false
         /// La Switch Session arrancó con ⌘⇧⇥.
         let startsBackwards: Bool
 
@@ -97,7 +95,7 @@ public struct SwitcherState: Sendable {
             self.windows = windows
             self.windowless = windowless
             self.startsBackwards = startsBackwards
-            selected = Self.initialSelection(windows: windows.count, total: windows.count + windowless.count, backwards: startsBackwards)
+            selected = Self.initialSelection(total: windows.count + windowless.count, backwards: startsBackwards)
         }
 
         var itemCount: Int { windows.count + windowless.count }
@@ -105,10 +103,10 @@ public struct SwitcherState: Sendable {
         var isSwitcherVisible: Bool { shown != nil }
 
         /// Con ⌘⇥, el segundo ítem en Recency Order (un Quick Switch); con ⌘⇧⇥, el último.
-        /// Si hay uno solo, ese.
-        private static func initialSelection(windows: Int, total: Int, backwards: Bool) -> Int {
+        /// Si hay uno solo, ese. Los ítems son Windows y Windowless Apps.
+        private static func initialSelection(total: Int, backwards: Bool) -> Int {
             if backwards { return max(0, total - 1) }
-            return windows >= 2 ? 1 : 0
+            return total >= 2 ? 1 : 0
         }
 
         /// Cambian las Windows: la selección sigue a su Window; si esa se fue, queda en la misma
@@ -116,7 +114,7 @@ public struct SwitcherState: Sendable {
         mutating func replaceWindows(with newWindows: [WindowID], windowless newWindowless: [AppID]) {
             let newTotal = newWindows.count + newWindowless.count
             if itemCount == 0 {
-                selected = Self.initialSelection(windows: newWindows.count, total: newTotal, backwards: startsBackwards)
+                selected = Self.initialSelection(total: newTotal, backwards: startsBackwards)
             } else if let window = selectedWindow, let index = newWindows.firstIndex(of: window) {
                 selected = index
             } else if let app = selectedWindowlessApp, let index = newWindowless.firstIndex(of: app) {
@@ -134,6 +132,7 @@ public struct SwitcherState: Sendable {
             let index = selected - windows.count
             return windowless.indices.contains(index) ? windowless[index] : nil
         }
+
         /// Lo que hay que deshacer al terminar la Switch Session.
         var closingEffects: [SwitcherEffect] {
             (delayElapsed ? [] : [.cancelActivationTimer]) + (isSwitcherVisible ? [.hideSwitcher] : [])
@@ -141,7 +140,6 @@ public struct SwitcherState: Sendable {
 
         mutating func move(by offset: Int) {
             guard itemCount > 0 else { return }
-            moved = true
             selected = ((selected + offset) % itemCount + itemCount) % itemCount
             shown?.selected = selected
         }
@@ -197,7 +195,7 @@ public struct SwitcherCore: Sendable {
                 return (next, session.isSwitcherVisible ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
             }
             guard !isRepeat else { return (next, [.consumeEvent]) }
-            next.session = .init(windows: eligibleWindows(next), windowless: windowlessApps(next), startsBackwards: modifiers.contains(.shift))
+            next.session = .init(windows: eligibleWindows(next), windowless: windowlessApps(in: next.snapshot, scope: .allWindows), startsBackwards: modifiers.contains(.shift))
             return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelayMilliseconds)])
 
         case .keyUp(let key):
@@ -208,10 +206,12 @@ public struct SwitcherCore: Sendable {
             guard let session = next.session, !modifiers.contains(.command) else { return (next, []) }
             next.session = nil
             var effects = session.closingEffects
-            if session.windows.count >= 2, let target = session.selectedWindow {
-                effects.append(.activate(target))
-            } else if session.moved, let app = session.selectedWindowlessApp {
-                effects.append(.activateApp(app))
+            if session.itemCount >= 2 {
+                if let target = session.selectedWindow {
+                    effects.append(.activate(target))
+                } else if let app = session.selectedWindowlessApp {
+                    effects.append(.activateApp(app))
+                }
             }
             return (next, effects)
 
@@ -244,7 +244,7 @@ public struct SwitcherCore: Sendable {
                 .sorted { $0.stackIndex < $1.stackIndex }
             next.recency += unknown.map(\.id)
             guard var session = next.session else { return (next, []) }
-            session.replaceWindows(with: eligibleWindows(next), windowless: windowlessApps(next))
+            session.replaceWindows(with: eligibleWindows(next), windowless: windowlessApps(in: next.snapshot, scope: .allWindows))
             let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
@@ -261,10 +261,11 @@ public struct SwitcherCore: Sendable {
     }
 
     /// Windowless Apps: las que informa el adaptador y no tienen ninguna Window en la foto.
-    /// Solo existe el Scope All Windows, así que siempre entran.
-    private static func windowlessApps(_ state: SwitcherState) -> [AppID] {
-        let withWindows = Set(state.snapshot.windows.map(\.appID))
-        return state.snapshot.windowlessApps.filter { !withWindows.contains($0) }
+    /// Solo entran en el Scope All Windows.
+    public static func windowlessApps(in snapshot: Snapshot, scope: Scope) -> [AppID] {
+        guard scope == .allWindows else { return [] }
+        let withWindows = Set(snapshot.windows.map(\.appID))
+        return snapshot.windowlessApps.filter { !withWindows.contains($0) }
     }
 
     /// Reglas fijas de inclusión: Space y pantalla actuales, sin Minimized ni Windows de Hidden Apps.
