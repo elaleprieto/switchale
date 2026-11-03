@@ -1,11 +1,6 @@
 import Testing
 import SwitchaleCore
 
-private func shownContent(_ effects: [SwitcherEffect]) -> SwitcherContent? {
-    for case .showSwitcher(let content) in effects { return content }
-    return nil
-}
-
 @Suite("Varias pantallas")
 struct MultiScreenTests {
     private let windows = [

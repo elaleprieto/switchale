@@ -78,6 +78,8 @@ enum SwitcherPreferences {
             .value("includesMinimizedWindows", \.includesMinimizedWindows),
             .value("includesHiddenApps", \.includesHiddenApps),
             .value("includesOtherScreens", \.includesOtherScreens),
+            // Bool; por defecto false.
+            .value("includesOtherSpaces", \.includesOtherSpaces),
             // Int, ancho de la Thumbnail en puntos (`ThumbnailSize`); por defecto 160.
             Setting("thumbnailWidth", get: { $0.thumbnailSize.width }, set: { $0.thumbnailSize = ThumbnailSize(width: $1) }),
         ]

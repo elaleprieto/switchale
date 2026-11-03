@@ -16,30 +16,70 @@ struct WindowActivator {
     /// Devuelve false sin tocar nada si la Window o su App ya no existen.
     @discardableResult
     func activate(_ handle: WindowHandle) -> Bool {
-        let element = handle.element
         let app = handle.app
         if app.isSwitchale { return activateOwn(handle.id) }
-        guard !app.isTerminated, axAttribute(element, kAXRoleAttribute) != nil else { return false }
-        let wasHidden = app.isHidden
-        let wasMinimized = axIsMinimized(element)
-        if !wasHidden && !wasMinimized {
+        guard !app.isTerminated else { return false }
+        switch handle.location {
+        case .currentSpace(let element):
+            return activate(element, of: app)
+        case .otherSpace(let element):
+            if activateInOtherSpace(handle, element: element) { return true }
+            // Si `Spaces` falló, como si la opción estuviera desactivada: por AX, si AX la lista.
+            guard let element else { return false }
+            return activate(element, of: app)
+        }
+    }
+
+    /// Activación por AX. Devuelve false si la Window ya no existe.
+    private func activate(_ element: AXUIElement, of app: NSRunningApplication) -> Bool {
+        guard axAttribute(element, kAXRoleAttribute) != nil else { return false }
+        if !app.isHidden && !axIsMinimized(element) {
             focus(element, of: app)
             return true
         }
+        Task { @MainActor in await restoreAndFocus(element, of: app) }
+        return true
+    }
+
+    /// Una Window de otro Space: `Spaces` pone al frente su App con ella como key, y macOS cambia
+    /// a su Space. Ya en ese Space, AX la lista y se la restaura y se le da foco como a cualquier
+    /// otra (si AX la listaba de antes, con ese elemento). Devuelve false si `Spaces` falló.
+    private func activateInOtherSpace(_ handle: WindowHandle, element: AXUIElement?) -> Bool {
+        let app = handle.app
+        if app.isHidden { app.unhide() }
+        guard Spaces.focus(handle) else { return false }
         Task { @MainActor in
-            // Primero la App y después la Window: una Window minimizada de una App oculta necesita las dos.
-            if wasHidden {
-                app.unhide()
-                await Self.wait { !app.isHidden }
+            var element = element
+            await Self.wait {
+                element = element ?? Self.axWindow(of: handle)
+                return element != nil
             }
-            if wasMinimized {
-                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-                await Self.wait { !axIsMinimized(element) }
-            }
-            guard !app.isTerminated else { return }
-            focus(element, of: app)
+            guard let element else { return }
+            await restoreAndFocus(element, of: app)
         }
         return true
+    }
+
+    /// Muestra la App, desminimiza la Window y le da foco. Primero la App y después la Window: una
+    /// Window minimizada de una App oculta necesita las dos.
+    private func restoreAndFocus(_ element: AXUIElement, of app: NSRunningApplication) async {
+        if app.isHidden {
+            app.unhide()
+            await Self.wait { !app.isHidden }
+        }
+        if axIsMinimized(element) {
+            AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            await Self.wait { !axIsMinimized(element) }
+        }
+        guard !app.isTerminated else { return }
+        focus(element, of: app)
+    }
+
+    /// El elemento AX de la Window, si AX la lista (ya en su Space).
+    private static func axWindow(of handle: WindowHandle) -> AXUIElement? {
+        let appElement = axApplicationElement(pid: handle.app.processIdentifier)
+        let windows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        return windows.first { axWindowID($0) == handle.id }
     }
 
     /// Reintenta cada `pollInterval` hasta que se cumpla la condición o venza el timeout.

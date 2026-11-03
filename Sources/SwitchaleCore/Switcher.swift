@@ -21,6 +21,9 @@ public struct SwitcherConfig: Sendable, Equatable {
     public var includesHiddenApps: Bool
     /// Incluir las Windows de otras pantallas (por defecto sí).
     public var includesOtherScreens: Bool
+    /// Incluir las Windows de otros Spaces (por defecto no). El adaptador solo las informa con la
+    /// opción activada: necesita APIs privadas (ADR-0002).
+    public var includesOtherSpaces: Bool
     public var panelScreen: PanelScreen
     public var activationDelay: ActivationDelay
 
@@ -32,6 +35,7 @@ public struct SwitcherConfig: Sendable, Equatable {
         hotkeys: ScopeHotkeys = ScopeHotkeys(),
         includesMinimizedWindows: Bool = true,
         includesHiddenApps: Bool = true, includesOtherScreens: Bool = true,
+        includesOtherSpaces: Bool = false,
         panelScreen: PanelScreen = .focusedWindow, activationDelay: ActivationDelay = ActivationDelay(),
         thumbnailSize: ThumbnailSize = ThumbnailSize()
     ) {
@@ -40,6 +44,7 @@ public struct SwitcherConfig: Sendable, Equatable {
         self.includesMinimizedWindows = includesMinimizedWindows
         self.includesHiddenApps = includesHiddenApps
         self.includesOtherScreens = includesOtherScreens
+        self.includesOtherSpaces = includesOtherSpaces
         self.panelScreen = panelScreen
         self.activationDelay = activationDelay
         self.thumbnailSize = thumbnailSize
@@ -480,14 +485,15 @@ public struct SwitcherCore: Sendable {
     }
 
     /// Las Windows del Scope en Recency Order. Current App: solo las de la App activa.
-    /// Reglas de inclusión: Space actual fijo; Minimized, Hidden Apps y otras pantallas según la
-    /// configuración.
+    /// Reglas de inclusión: otros Spaces, otras pantallas, Minimized y Hidden Apps según la
+    /// configuración (otros Spaces, solo si la foto los ubicó).
     private static func eligibleWindows(_ state: SwitcherState, _ scope: Scope) -> [WindowID] {
         let windowsByID = state.snapshot.windowsByID
+        let includesOtherSpaces = state.config.includesOtherSpaces && state.snapshot.locatesOtherSpaces
         return state.recency.compactMap { id in
             guard let window = windowsByID[id],
                   scope == .allWindows || window.appID == state.activeApp,
-                  window.isInCurrentSpace,
+                  includesOtherSpaces || window.isInCurrentSpace,
                   state.config.includesOtherScreens || window.screen == state.snapshot.currentScreen,
                   state.config.includesMinimizedWindows || !window.isMinimized,
                   state.config.includesHiddenApps || !window.isAppHidden

@@ -19,6 +19,7 @@ final class PreferencesWindowController: NSWindowController {
     private let includesMinimized = NSButton(checkboxWithTitle: "Minimized Windows", target: nil, action: nil)
     private let includesHiddenApps = NSButton(checkboxWithTitle: "Windows de Hidden Apps", target: nil, action: nil)
     private let includesOtherScreens = NSButton(checkboxWithTitle: "Windows de otras pantallas", target: nil, action: nil)
+    private let includesOtherSpaces = NSButton(checkboxWithTitle: "Windows de otros Spaces", target: nil, action: nil)
     private let launchAtLogin = NSButton(checkboxWithTitle: "Iniciar switchale al loguearse", target: nil, action: nil)
     private let launchAtLoginNote = NSTextField(labelWithString: "Falta aprobarlo en Configuración del Sistema › General › Ítems de inicio")
     private let thumbnailSlider = NSSlider()
@@ -125,13 +126,14 @@ final class PreferencesWindowController: NSWindowController {
         panelScreenPopUp.action = #selector(changed)
         rows.append([label("Pantalla del panel"), panelScreenPopUp])
 
-        for checkbox in [includesMinimized, includesHiddenApps, includesOtherScreens] {
+        for checkbox in [includesMinimized, includesHiddenApps, includesOtherScreens, includesOtherSpaces] {
             checkbox.target = self
             checkbox.action = #selector(changed)
         }
         rows.append([label("Incluir"), includesMinimized])
         rows.append([NSGridCell.emptyContentView, includesHiddenApps])
         rows.append([NSGridCell.emptyContentView, includesOtherScreens])
+        rows.append([NSGridCell.emptyContentView, includesOtherSpaces])
 
         launchAtLogin.target = self
         launchAtLogin.action = #selector(launchAtLoginChanged)
@@ -208,6 +210,7 @@ final class PreferencesWindowController: NSWindowController {
         includesMinimized.state = config.includesMinimizedWindows ? .on : .off
         includesHiddenApps.state = config.includesHiddenApps ? .on : .off
         includesOtherScreens.state = config.includesOtherScreens ? .on : .off
+        includesOtherSpaces.state = config.includesOtherSpaces ? .on : .off
         launchAtLogin.state = loginItem.isRegistered ? .on : .off
         launchAtLoginNote.isHidden = loginItem != .requiresApproval
         thumbnailSlider.integerValue = config.thumbnailSize.width
@@ -228,6 +231,7 @@ final class PreferencesWindowController: NSWindowController {
         config.includesMinimizedWindows = includesMinimized.state == .on
         config.includesHiddenApps = includesHiddenApps.state == .on
         config.includesOtherScreens = includesOtherScreens.state == .on
+        config.includesOtherSpaces = includesOtherSpaces.state == .on
         config.thumbnailSize = ThumbnailSize(width: thumbnailSlider.integerValue)
         return config
     }

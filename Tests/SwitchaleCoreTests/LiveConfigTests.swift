@@ -118,11 +118,11 @@ struct LiveConfigTests {
     @Test("Desactivar en vivo la inclusión de Minimized Windows las saca de la próxima Switch Session")
     func inclusionLive() {
         var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2)])
-        #expect(shown(holdHotkey(&c))?.items.map(\.id) == [.window(WindowID(1)), .window(WindowID(2)), .window(WindowID(3))])
+        #expect(shownContent(holdHotkey(&c))?.items.map(\.id) == [.window(WindowID(1)), .window(WindowID(2)), .window(WindowID(3))])
         _ = c.send(.modifiersChanged([]))
         _ = c.send(.windowFocused(WindowID(1)))
         _ = c.send(.configChanged(.init(includesMinimizedWindows: false)))
-        #expect(shown(holdHotkey(&c))?.items.map(\.id) == [.window(WindowID(1)), .window(WindowID(3))])
+        #expect(shownContent(holdHotkey(&c))?.items.map(\.id) == [.window(WindowID(1)), .window(WindowID(3))])
     }
 
     @Test("Cambiar en vivo la pantalla del panel a la principal mueve el Window Switcher de la próxima Switch Session")
@@ -133,7 +133,7 @@ struct LiveConfigTests {
         _ = c.send(.configChanged(.init(panelScreen: .primary)))
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
         _ = c.send(.snapshot(snapshot(windows, focused: 1, primary: otherScreen)))
-        #expect(shown(c.send(.activationDelayElapsed))?.screen == otherScreen)
+        #expect(shownContent(c.send(.activationDelayElapsed))?.screen == otherScreen)
     }
 
     @Test("Volver a la configuración por defecto restaura ⌘⇥ y el Activation Delay de 80 ms")
@@ -151,13 +151,13 @@ struct LiveConfigTests {
     func thumbnailSizeNextSession() {
         var c = core(windows)
         let bigger = ThumbnailSize(width: 224)
-        #expect(shown(holdHotkey(&c))?.thumbnailSize == ThumbnailSize())
+        #expect(shownContent(holdHotkey(&c))?.thumbnailSize == ThumbnailSize())
         var changed = SwitcherConfig()
         changed.thumbnailSize = bigger
         _ = c.send(.configChanged(changed))
         #expect(c.send(.snapshot(snapshot(windows))) == [])
         _ = c.send(.modifiersChanged([]))
-        #expect(shown(holdHotkey(&c))?.thumbnailSize == bigger)
+        #expect(shownContent(holdHotkey(&c))?.thumbnailSize == bigger)
     }
 }
 
@@ -186,11 +186,6 @@ struct ThumbnailSizeTests {
         var config = SwitcherConfig()
         config.thumbnailSize = ThumbnailSize(width: width)
         var c = core([win(1, stack: 0), win(2, stack: 1)], config: config)
-        return shown(holdHotkey(&c))?.thumbnailSize
+        return shownContent(holdHotkey(&c))?.thumbnailSize
     }
-}
-
-private func shown(_ effects: [SwitcherEffect]) -> SwitcherContent? {
-    for case .showSwitcher(let content) in effects { return content }
-    return nil
 }
