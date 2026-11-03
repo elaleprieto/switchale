@@ -46,7 +46,7 @@ struct WindowSwitcherVisibilityTests {
 
     @Test("Con cero ítems el Window Switcher no aparece, y soltar no hace nada")
     func noItems() {
-        var c = core([win(1, stack: 0, minimized: true)], config: .init(includesMinimized: false))
+        var c = core([win(1, stack: 0, minimized: true)], config: visibleOnly)
         #expect(holdHotkey(&c) == [])
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)) == [.consumeEvent])
         #expect(c.send(.modifiersChanged([])) == [])

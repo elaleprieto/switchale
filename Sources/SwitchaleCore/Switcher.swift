@@ -3,18 +3,18 @@
 public struct SwitcherConfig: Sendable, Equatable {
     public var allWindowsEnabled: Bool
     /// Incluir las Minimized Windows (por defecto sí).
-    public var includesMinimized: Bool
+    public var includesMinimizedWindows: Bool
     /// Incluir las Windows de Hidden Apps (por defecto sí).
     public var includesHiddenApps: Bool
     /// Activation Delay por defecto: 80 ms.
     public var activationDelayMilliseconds: Int
 
     public init(
-        allWindowsEnabled: Bool = true, includesMinimized: Bool = true, includesHiddenApps: Bool = true,
+        allWindowsEnabled: Bool = true, includesMinimizedWindows: Bool = true, includesHiddenApps: Bool = true,
         activationDelayMilliseconds: Int = 80
     ) {
         self.allWindowsEnabled = allWindowsEnabled
-        self.includesMinimized = includesMinimized
+        self.includesMinimizedWindows = includesMinimizedWindows
         self.includesHiddenApps = includesHiddenApps
         self.activationDelayMilliseconds = activationDelayMilliseconds
     }
@@ -67,17 +67,26 @@ public struct SwitcherItem: Sendable, Equatable {
     public var appID: AppID
     /// Título de la Window, o el nombre de la App si la Window no tiene título.
     public var title: String
-    /// La Window está Minimized (el panel la marca).
-    public var isMinimized: Bool
-    /// La Window es de una Hidden App (el panel la marca).
-    public var isAppHidden: Bool
+    /// Marca que muestra el panel.
+    public var mark: WindowMark
 
-    public init(windowID: WindowID, appID: AppID, title: String, isMinimized: Bool = false, isAppHidden: Bool = false) {
+    public init(windowID: WindowID, appID: AppID, title: String, mark: WindowMark = .none) {
         self.windowID = windowID
         self.appID = appID
         self.title = title
-        self.isMinimized = isMinimized
-        self.isAppHidden = isAppHidden
+        self.mark = mark
+    }
+}
+
+/// Marca visual de un ítem. Si la Window es Minimized y además de una Hidden App, gana `.minimized`:
+/// es lo que la distingue de las demás Windows de su App.
+public enum WindowMark: Sendable, Equatable {
+    case none
+    case minimized
+    case appHidden
+
+    init(_ window: Window) {
+        self = window.isMinimized ? .minimized : (window.isAppHidden ? .appHidden : .none)
     }
 }
 
@@ -255,7 +264,7 @@ public struct SwitcherCore: Sendable {
             guard let window = windowsByID[id],
                   window.isInCurrentSpace,
                   window.screen == state.snapshot.currentScreen,
-                  state.config.includesMinimized || !window.isMinimized,
+                  state.config.includesMinimizedWindows || !window.isMinimized,
                   state.config.includesHiddenApps || !window.isAppHidden
             else { return nil }
             return id
@@ -273,8 +282,7 @@ extension Snapshot {
             guard let window = windowsByID[id] else { return nil }
             let title = window.title.isEmpty ? appNames[window.appID] ?? "" : window.title
             return SwitcherItem(
-                windowID: id, appID: window.appID, title: title,
-                isMinimized: window.isMinimized, isAppHidden: window.isAppHidden
+                windowID: id, appID: window.appID, title: title, mark: WindowMark(window)
             )
         }
     }

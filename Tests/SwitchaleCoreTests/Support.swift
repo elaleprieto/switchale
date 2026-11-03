@@ -34,3 +34,6 @@ func quickSwitchTarget(_ core: inout SwitcherCore) -> WindowID? {
     for case .activate(let id) in core.send(.modifiersChanged([])) { return id }
     return nil
 }
+
+/// Config "solo Windows visibles": sin Minimized Windows ni Windows de Hidden Apps.
+let visibleOnly = SwitcherConfig(includesMinimizedWindows: false, includesHiddenApps: false)

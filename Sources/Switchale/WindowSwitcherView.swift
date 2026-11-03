@@ -82,7 +82,7 @@ final class WindowSwitcherView {
             let y = size.height - Metrics.padding - CGFloat(row + 1) * cell.height - CGFloat(row) * Metrics.spacing
 
             let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
-            view.configure(title: item.title, icon: Self.icon(for: item.appID), isMinimized: item.isMinimized, isAppHidden: item.isAppHidden)
+            view.configure(title: item.title, icon: Self.icon(for: item.appID), mark: item.mark)
             view.isSelected = index == content.selected
             background.addSubview(view)
             return view
@@ -173,16 +173,24 @@ private final class SwitcherCell: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) no se usa") }
 
-    func configure(title: String, icon: NSImage?, isMinimized: Bool, isAppHidden: Bool) {
+    func configure(title: String, icon: NSImage?, mark: WindowMark) {
         // Marca visual: ícono atenuado y un símbolo en la esquina (minimizada u oculta).
-        let marker = isMinimized ? "minus.circle.fill" : (isAppHidden ? "eye.slash.fill" : nil)
-        let note = isMinimized ? " (minimizada)" : (isAppHidden ? " (App oculta)" : "")
+        let look = Self.look(of: mark)
         label.stringValue = title
-        label.toolTip = title + note
+        label.toolTip = look.note.map { "\(title) (\($0))" } ?? title
         iconView.image = icon
-        iconView.alphaValue = marker == nil ? 1 : Metrics.markedIconAlpha
-        markerView.image = marker.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: note) }
-        markerView.isHidden = marker == nil
+        iconView.alphaValue = look.alpha
+        markerView.image = look.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: look.note) }
+        markerView.isHidden = look.symbol == nil
+    }
+
+    /// Cómo se ve cada marca: símbolo, nota (tooltip y accesibilidad) y alpha del ícono.
+    private static func look(of mark: WindowMark) -> (symbol: String?, note: String?, alpha: CGFloat) {
+        switch mark {
+        case .none: (nil, nil, 1)
+        case .minimized: ("minus.circle.fill", "minimizada", Metrics.markedIconAlpha)
+        case .appHidden: ("eye.slash.fill", "App oculta", Metrics.markedIconAlpha)
+        }
     }
 
     override var wantsUpdateLayer: Bool { true }
