@@ -126,14 +126,13 @@ struct QuickSwitchTests {
 
 @Suite("Quick Switch: qué Windows entran")
 struct QuickSwitchInclusionTests {
-    @Test("Se excluyen las Minimized, las de Hidden Apps, las de otros Spaces y las de otras pantallas")
+    @Test("Se excluyen las Minimized, las de Hidden Apps y las de otros Spaces")
     func exclusions() {
         var c = core([
             win(1, stack: 0),
             win(2, stack: 1, minimized: true),
             win(3, stack: 2, appHidden: true),
             win(4, stack: 3, inSpace: false),
-            win(5, stack: 4, screen: otherScreen),
             win(6, stack: 5),
         ])
         #expect(quickSwitchTarget(&c) == WindowID(6))

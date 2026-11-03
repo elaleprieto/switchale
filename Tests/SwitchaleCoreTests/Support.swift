@@ -13,11 +13,13 @@ func win(
     )
 }
 
-func snapshot(_ windows: [Window]) -> Snapshot {
+func snapshot(_ windows: [Window], mouse: ScreenID = mainScreen, primary: ScreenID = mainScreen) -> Snapshot {
     Snapshot(
         windows: windows,
         apps: Set(windows.map(\.appID)).map { AppInfo(id: $0, name: "app\($0.rawValue)") },
-        currentScreen: mainScreen
+        currentScreen: mainScreen,
+        mouseScreen: mouse,
+        primaryScreen: primary
     )
 }
 

@@ -79,11 +79,20 @@ public struct Snapshot: Sendable, Equatable {
     public var apps: [AppInfo]
     /// La pantalla donde está el usuario ahora.
     public var currentScreen: ScreenID
+    /// La pantalla donde está el mouse.
+    public var mouseScreen: ScreenID
+    /// La pantalla principal del sistema.
+    public var primaryScreen: ScreenID
 
-    public init(windows: [Window], apps: [AppInfo], currentScreen: ScreenID) {
+    public init(
+        windows: [Window], apps: [AppInfo], currentScreen: ScreenID,
+        mouseScreen: ScreenID? = nil, primaryScreen: ScreenID? = nil
+    ) {
         self.windows = windows
         self.apps = apps
         self.currentScreen = currentScreen
+        self.mouseScreen = mouseScreen ?? currentScreen
+        self.primaryScreen = primaryScreen ?? currentScreen
     }
 
     var windowsByID: [WindowID: Window] {
