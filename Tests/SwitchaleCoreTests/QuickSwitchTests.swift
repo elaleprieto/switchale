@@ -1,118 +1,139 @@
 import Testing
 import SwitchaleCore
 
-private func win(_ id: Int, app: Int = 1, stack: Int) -> WindowInfo {
-    WindowInfo(id: id, appID: app, title: "w\(id)", isMinimized: false, isAppHidden: false, stackIndex: stack)
-}
-
-private func core(_ windows: [WindowInfo], config: SwitcherConfig = .init()) -> SwitcherCore {
-    var c = SwitcherCore(config: config)
-    _ = c.send(.snapshot(Snapshot(windows: windows)))
-    return c
-}
-
 @Suite("Quick Switch")
 struct QuickSwitchTests {
     @Test("Tocar y soltar el Hotkey antes del Activation Delay activa la segunda Window, sin panel")
     func quickSwitch() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
-        #expect(c.send(.hotkeyPressed(.allWindows)) == [.startActivationTimer])
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(2)])
+        #expect(c.send(.keyDown(.tab, [.command], isRepeat: false))
+            == [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: 80)])
+        #expect(c.send(.keyUp(.tab)) == [.consumeEvent])
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(2))])
+    }
+
+    @Test("El Activation Delay sale de la configuración del núcleo")
+    func configurableDelay() {
+        var c = core([win(1, stack: 0)], config: .init(activationDelayMilliseconds: 150))
+        #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)).contains(.startActivationTimer(milliseconds: 150)))
     }
 
     @Test("Quick Switch alterna entre las dos Windows más recientes, aun de la misma App")
     func toggles() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(2)])
-        _ = c.send(.windowFocused(2))
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(1)])
+        #expect(quickSwitchTarget(&c) == WindowID(2))
+        _ = c.send(.windowFocused(WindowID(2)))
+        #expect(quickSwitchTarget(&c) == WindowID(1))
     }
 
     @Test("Si vence el Activation Delay, soltar activa la segunda Window y no cancela el temporizador")
     func afterDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
-        _ = c.send(.hotkeyPressed(.allWindows))
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
         #expect(c.send(.activationDelayElapsed) == [])
-        #expect(c.send(.modifierReleased) == [.activate(2)])
-    }
-
-    @Test("El Recency Order sigue los cambios de foco externos")
-    func externalFocus() {
-        var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
-        _ = c.send(.windowFocused(3))
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(1)])
-    }
-
-    @Test("Las Windows que no vio recibir foco van al final, en orden de apilamiento")
-    func unknownAtEnd() {
-        var c = core([win(1, stack: 0), win(2, stack: 1)])
-        _ = c.send(.windowFocused(2))
-        // Aparecen 4 (apilada detrás) y 3 (apilada delante): quedan después de 2 y 1.
-        _ = c.send(.snapshot(Snapshot(windows: [win(1, stack: 2), win(2, stack: 3), win(3, stack: 0), win(4, stack: 1)])))
-        // Orden esperado: 2, 1, 3, 4. Se activa 1, 3 y luego 4 yendo a foco.
-        _ = c.send(.windowFocused(1))
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(2)])
-        _ = c.send(.windowFocused(2))
-        _ = c.send(.windowFocused(4))
-        _ = c.send(.windowFocused(3))
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(4)])
-    }
-
-    @Test("Una Window desconocida nunca pasa delante de las que recibieron foco")
-    func unknownBehindFocused() {
-        var c = core([win(1, stack: 0), win(2, stack: 1)])
-        _ = c.send(.windowFocused(2))
-        _ = c.send(.snapshot(Snapshot(windows: [win(1, stack: 1), win(2, stack: 2), win(3, stack: 0)])))
-        // Recency: 2, 1, 3. Segunda = 1.
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(1)])
-    }
-
-    @Test("Sin foco previo, el orden inicial es el de apilamiento")
-    func initialStacking() {
-        var c = core([win(7, stack: 1), win(5, stack: 0), win(9, stack: 2)])
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(7)])
-    }
-
-    @Test("Las Windows cerradas salen del Recency Order")
-    func closed() {
-        var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
-        _ = c.send(.snapshot(Snapshot(windows: [win(1, stack: 0), win(3, stack: 1)])))
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(3)])
+        #expect(c.send(.modifiersChanged([])) == [.activate(WindowID(2))])
     }
 
     @Test("Con una sola Window, el Quick Switch no activa nada")
     func single() {
         var c = core([win(1, stack: 0)])
-        _ = c.send(.hotkeyPressed(.allWindows))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer])
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer])
     }
 
-    @Test("Sin Windows no se inicia ninguna Switch Session")
+    @Test("Sin Windows, soltar el modificador no activa nada")
     func none() {
         var c = core([])
-        #expect(c.send(.hotkeyPressed(.allWindows)) == [])
-        #expect(c.send(.modifierReleased) == [])
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer])
     }
 
     @Test("Con el Scope desactivado el evento pasa al sistema")
     func disabled() {
         var c = core([win(1, stack: 0), win(2, stack: 1)], config: .init(allWindowsEnabled: false))
-        #expect(c.send(.hotkeyPressed(.allWindows)) == [.passEventToSystem])
-        #expect(c.send(.modifierReleased) == [])
+        #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)) == [])
+        #expect(c.send(.keyUp(.tab)) == [])
+        #expect(c.send(.modifiersChanged([])) == [])
     }
 
-    @Test("Current App solo considera las Windows de la App con foco")
-    func currentApp() {
-        var c = core([win(1, app: 1, stack: 0), win(2, app: 2, stack: 1), win(3, app: 1, stack: 2)])
-        _ = c.send(.hotkeyPressed(.currentApp))
-        #expect(c.send(.modifierReleased) == [.cancelActivationTimer, .activate(3)])
+    @Test("⌘⇧⇥ también se consume, para que no abra el App Switcher nativo")
+    func shiftTab() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        #expect(c.send(.keyDown(.tab, [.command, .shift], isRepeat: false)).contains(.consumeEvent))
+    }
+
+    @Test("Otras combinaciones con ⇥ pasan al sistema")
+    func otherCombos() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        #expect(c.send(.keyDown(.tab, [], isRepeat: false)) == [])
+        #expect(c.send(.keyDown(.tab, [.control], isRepeat: false)) == [])
+        #expect(c.send(.keyDown(.tab, [.command, .option], isRepeat: false)) == [])
+    }
+
+    @Test("El autorepeat de ⌘⇥ se consume pero no abre otra sesión")
+    func repeats() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(c.send(.keyDown(.tab, [.command], isRepeat: true)) == [.consumeEvent])
+    }
+
+    @Test("El keyUp de ⇥ se consume aunque el ⌘ ya se haya soltado")
+    func keyUpAfterModifier() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        _ = c.send(.modifiersChanged([]))
+        #expect(c.send(.keyUp(.tab)) == [.consumeEvent])
+        #expect(c.send(.keyUp(.tab)) == [])
+    }
+
+    @Test("Un keyUp sin sesión previa pasa al sistema")
+    func strayKeyUp() {
+        var c = core([win(1, stack: 0)])
+        #expect(c.send(.keyUp(.tab)) == [])
+    }
+
+    @Test("Si se pierde el soltado del modificador, la próxima lectura de modificadores cierra la sesión")
+    func recoversFromLostRelease() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(c.send(.modifiersChanged([.shift])) == [.cancelActivationTimer, .activate(WindowID(2))])
+        #expect(c.send(.modifiersChanged([])) == [])
+    }
+
+    @Test("Mientras ⌘ sigue apretado la sesión sigue abierta")
+    func modifierStillHeld() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(c.send(.modifiersChanged([.command, .shift])) == [])
+    }
+}
+
+@Suite("Quick Switch: qué Windows entran")
+struct QuickSwitchInclusionTests {
+    @Test("Se excluyen las Minimized, las de Hidden Apps, las de otros Spaces y las de otras pantallas")
+    func exclusions() {
+        var c = core([
+            win(1, stack: 0),
+            win(2, stack: 1, minimized: true),
+            win(3, stack: 2, appHidden: true),
+            win(4, stack: 3, inSpace: false),
+            win(5, stack: 4, screen: otherScreen),
+            win(6, stack: 5),
+        ])
+        #expect(quickSwitchTarget(&c) == WindowID(6))
+    }
+
+    @Test("Si solo queda una Window elegible, no se activa nada")
+    func onlyOneEligible() {
+        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true)])
+        #expect(quickSwitchTarget(&c) == nil)
+    }
+
+    @Test("Una Window que sale de Minimized vuelve a entrar sin perder su lugar de Recency Order")
+    func unminimizedReturns() {
+        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2)])
+        #expect(quickSwitchTarget(&c) == WindowID(3))
+        _ = c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])))
+        #expect(quickSwitchTarget(&c) == WindowID(2))
     }
 }

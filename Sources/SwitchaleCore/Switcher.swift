@@ -1,46 +1,21 @@
 // Núcleo del switcher: función (estado, evento) → (estado, [efecto]).
 
-public typealias WindowID = Int
-public typealias AppID = Int
-
-/// Una Window que cuenta como tal (el adaptador ya filtró subrol, tamaño, capa y App regular).
-public struct WindowInfo: Sendable, Equatable {
-    public var id: WindowID
-    public var appID: AppID
-    public var title: String
-    public var isMinimized: Bool
-    public var isAppHidden: Bool
-    /// Posición en el orden de apilamiento (0 = al frente).
-    public var stackIndex: Int
-
-    public init(id: WindowID, appID: AppID, title: String, isMinimized: Bool, isAppHidden: Bool, stackIndex: Int) {
-        self.id = id
-        self.appID = appID
-        self.title = title
-        self.isMinimized = isMinimized
-        self.isAppHidden = isAppHidden
-        self.stackIndex = stackIndex
-    }
-}
-
-public struct Snapshot: Sendable, Equatable {
-    public var windows: [WindowInfo]
-    public init(windows: [WindowInfo]) { self.windows = windows }
-}
-
 public struct SwitcherConfig: Sendable, Equatable {
     public var allWindowsEnabled: Bool
-    public var currentAppEnabled: Bool
+    /// Activation Delay por defecto: 80 ms.
+    public var activationDelayMilliseconds: Int
 
-    public init(allWindowsEnabled: Bool = true, currentAppEnabled: Bool = true) {
+    public init(allWindowsEnabled: Bool = true, activationDelayMilliseconds: Int = 80) {
         self.allWindowsEnabled = allWindowsEnabled
-        self.currentAppEnabled = currentAppEnabled
+        self.activationDelayMilliseconds = activationDelayMilliseconds
     }
 }
 
 public enum SwitcherEvent: Sendable, Equatable {
-    case hotkeyPressed(Scope)
-    case modifierReleased
+    case keyDown(KeyCode, Modifiers, isRepeat: Bool)
+    case keyUp(KeyCode)
+    /// Estado actual de los modificadores (flagsChanged, o relectura tras reinstalar el tap).
+    case modifiersChanged(Modifiers)
     case activationDelayElapsed
     case windowFocused(WindowID)
     case snapshot(Snapshot)
@@ -48,22 +23,25 @@ public enum SwitcherEvent: Sendable, Equatable {
 }
 
 public enum SwitcherEffect: Sendable, Equatable {
-    case startActivationTimer
+    case startActivationTimer(milliseconds: Int)
     case cancelActivationTimer
     case activate(WindowID)
-    /// El evento de teclado original debe llegar al sistema.
-    case passEventToSystem
+    /// Pedir una foto fresca de las Windows (de forma asíncrona).
+    case refreshSnapshot
+    /// El evento de teclado no debe llegar al sistema. Sin este efecto pasa.
+    case consumeEvent
 }
 
 public struct SwitcherState: Sendable {
     var config: SwitcherConfig
-    var snapshot = Snapshot(windows: [])
+    var snapshot = Snapshot(windows: [], apps: [], currentScreen: ScreenID(0))
     /// Recency Order: de la más reciente a la menos reciente.
     var recency: [WindowID] = []
     var session: Session?
+    /// Tecla del Hotkey cuyo keyUp hay que consumir (puede llegar después de terminar la sesión).
+    var heldKey: KeyCode?
 
     struct Session {
-        var items: [WindowID]
         var delayElapsed = false
     }
 }
@@ -82,57 +60,70 @@ public struct SwitcherCore: Sendable {
     }
 
     public static func reduce(_ state: SwitcherState, _ event: SwitcherEvent) -> (SwitcherState, [SwitcherEffect]) {
-        var s = state
+        var next = state
         switch event {
-        case .hotkeyPressed(let scope):
-            let enabled = scope == .allWindows ? s.config.allWindowsEnabled : s.config.currentAppEnabled
-            guard enabled else { return (s, [.passEventToSystem]) }
-            guard s.session == nil else { return (s, []) }
-            let items = items(s, scope: scope)
-            guard !items.isEmpty else { return (s, []) }
-            s.session = .init(items: items)
-            return (s, [.startActivationTimer])
+        case .keyDown(let key, let modifiers, let isRepeat):
+            guard isQuickSwitchHotkey(key, modifiers), next.config.allWindowsEnabled else { return (next, []) }
+            guard !isRepeat, next.session == nil else { return (next, [.consumeEvent]) }
+            next.session = .init()
+            next.heldKey = key
+            return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelayMilliseconds)])
 
-        case .modifierReleased:
-            guard let session = s.session else { return (s, []) }
-            s.session = nil
+        case .keyUp(let key):
+            guard next.heldKey == key else { return (next, []) }
+            next.heldKey = nil
+            return (next, [.consumeEvent])
+
+        case .modifiersChanged(let modifiers):
+            guard let session = next.session, !modifiers.contains(.command) else { return (next, []) }
+            next.session = nil
             var effects: [SwitcherEffect] = session.delayElapsed ? [] : [.cancelActivationTimer]
-            if session.items.count >= 2 { effects.append(.activate(session.items[1])) }
-            return (s, effects)
+            let candidates = eligibleWindows(next)
+            if candidates.count >= 2 { effects.append(.activate(candidates[1])) }
+            return (next, effects)
 
         case .activationDelayElapsed:
-            s.session?.delayElapsed = true
-            return (s, [])
+            next.session?.delayElapsed = true
+            return (next, [])
 
         case .windowFocused(let id):
-            s.recency.removeAll { $0 == id }
-            s.recency.insert(id, at: 0)
-            return (s, [])
+            next.recency.removeAll { $0 == id }
+            next.recency.insert(id, at: 0)
+            return (next, [])
 
-        case .snapshot(let snap):
-            s.snapshot = snap
-            let present = Set(snap.windows.map(\.id))
-            s.recency = s.recency.filter { present.contains($0) }
-            let known = Set(s.recency)
-            let unknown = snap.windows.filter { !known.contains($0.id) }.sorted { $0.stackIndex < $1.stackIndex }
-            s.recency += unknown.map(\.id)
-            return (s, [])
+        case .snapshot(let snapshot):
+            next.snapshot = snapshot
+            let present = Set(snapshot.windows.map(\.id))
+            next.recency = next.recency.filter { present.contains($0) }
+            let known = Set(next.recency)
+            let unknown = snapshot.windows
+                .filter { !known.contains($0.id) }
+                .sorted { $0.stackIndex < $1.stackIndex }
+            next.recency += unknown.map(\.id)
+            return (next, [])
 
         case .configChanged(let config):
-            s.config = config
-            return (s, [])
+            next.config = config
+            return (next, [])
         }
     }
 
-    private static func items(_ s: SwitcherState, scope: Scope) -> [WindowID] {
-        let byID = Dictionary(s.snapshot.windows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let ordered = s.recency.compactMap { byID[$0] }
-        switch scope {
-        case .allWindows:
-            return ordered.map(\.id)
-        case .currentApp:
-            guard let app = ordered.first?.appID else { return [] }
-            return ordered.filter { $0.appID == app }.map(\.id)
+    /// ⌘⇥ y ⌘⇧⇥ (por ahora Shift no cambia el comportamiento, solo evita el App Switcher nativo).
+    private static func isQuickSwitchHotkey(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
+        key == .tab && modifiers.contains(.command) && modifiers.subtracting([.command, .shift]).isEmpty
+    }
+
+    /// Reglas fijas de inclusión: Space y pantalla actuales, sin Minimized ni Windows de Hidden Apps.
+    private static func eligibleWindows(_ state: SwitcherState) -> [WindowID] {
+        let windowsByID = Dictionary(uniqueKeysWithValues: state.snapshot.windows.map { ($0.id, $0) })
+        return state.recency.compactMap { id in
+            guard let window = windowsByID[id],
+                  window.isInCurrentSpace,
+                  window.screen == state.snapshot.currentScreen,
+                  !window.isMinimized,
+                  !window.isAppHidden
+            else { return nil }
+            return id
         }
     }
 }
