@@ -1,6 +1,8 @@
 name: Switchale
 options:
   bundleIdPrefix: com.aleprieto
+  # Única fuente de la versión mínima de macOS: XcodeGen la vuelca en
+  # MACOSX_DEPLOYMENT_TARGET y Xcode deriva LSMinimumSystemVersion de ahí.
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -8,8 +10,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "14.0"
-    # Team del certificado "Apple Development: prietoale@icloud.com (A2XLVN45B9)" (OU=WDHDK3HJZ3).
+    # Certificado "Apple Development: prietoale@icloud.com" (team WDHDK3HJZ3).
     DEVELOPMENT_TEAM: WDHDK3HJZ3
     # Firma manual con Apple Development (no ad-hoc): los permisos de TCC
     # (Accesibilidad, Grabación de pantalla) quedan atados a esta firma y
@@ -48,6 +49,8 @@ targets:
     sources: [Sources/Switchale]
     dependencies:
       - target: SwitchaleCore
+    # Las claves del Info.plist viven solo acá; XcodeGen escribe el plist
+    # (ignorado por git) al generar el proyecto.
     info:
       path: Sources/Switchale/Info.plist
       properties:
@@ -55,7 +58,6 @@ targets:
         CFBundleDisplayName: switchale
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
-        LSMinimumSystemVersion: "14.0"
         LSUIElement: true
         NSPrincipalClass: NSApplication
     settings:

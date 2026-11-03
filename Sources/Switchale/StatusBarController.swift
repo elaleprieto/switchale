@@ -3,6 +3,8 @@ import AppKit
 /// Ícono de switchale en la barra de menú y su menú ("Preferencias…" y "Salir").
 @MainActor
 final class StatusBarController {
+    private static let appName = "switchale"
+
     private let statusItem: NSStatusItem
 
     init() {
@@ -10,7 +12,7 @@ final class StatusBarController {
 
         if let button = statusItem.button {
             button.image = Self.makeIcon()
-            button.toolTip = "switchale"
+            button.toolTip = Self.appName
         }
 
         let menu = NSMenu()
@@ -39,7 +41,7 @@ final class StatusBarController {
     private static func makeIcon() -> NSImage? {
         let image = NSImage(
             systemSymbolName: "macwindow.on.rectangle",
-            accessibilityDescription: "switchale"
+            accessibilityDescription: appName
         )
         image?.isTemplate = true
         return image

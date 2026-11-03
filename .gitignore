@@ -4,6 +4,8 @@
 # Proyecto Xcode generado por XcodeGen (la fuente es project.yml)
 *.xcodeproj
 *.xcworkspace
+# Info.plist generado por XcodeGen desde `info.properties` en project.yml
+/Sources/Switchale/Info.plist
 
 # Productos de build
 /build/

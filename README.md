@@ -6,7 +6,7 @@ Window Switcher para macOS: reemplaza ⌘⇥ con un panel que lista Windows (no 
 
 - macOS 14 o posterior, Xcode 27
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
-- El certificado "Apple Development: prietoale@icloud.com" (team `WDHDK3HJZ3`) en el llavero
+- El certificado "Apple Development: prietoale@icloud.com" (team WDHDK3HJZ3) en el llavero
 
 ## Proyecto
 
@@ -35,4 +35,4 @@ codesign -dv build/DerivedData/Build/Products/Debug/switchale.app
 scripts/test.sh
 ```
 
-Corre los tests del núcleo con `xcodebuild test -scheme SwitchaleCore`. No necesitan permisos.
+Primero falla si algún archivo de `Sources/SwitchaleCore` importa AppKit, Cocoa, ApplicationServices, CoreGraphics o Carbon; después corre los tests del núcleo con `xcodebuild test -scheme SwitchaleCore`. No necesitan permisos.
