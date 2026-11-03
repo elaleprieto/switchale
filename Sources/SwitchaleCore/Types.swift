@@ -23,6 +23,14 @@ public struct KeyCode: Sendable, Hashable {
     public static let tab = KeyCode(48)
     /// Esc (kVK_Escape).
     public static let escape = KeyCode(53)
+    /// ← (kVK_LeftArrow).
+    public static let leftArrow = KeyCode(123)
+    /// → (kVK_RightArrow).
+    public static let rightArrow = KeyCode(124)
+    /// ↓ (kVK_DownArrow).
+    public static let downArrow = KeyCode(125)
+    /// ↑ (kVK_UpArrow).
+    public static let upArrow = KeyCode(126)
 }
 
 public struct Modifiers: OptionSet, Sendable {

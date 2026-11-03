@@ -22,6 +22,11 @@ public enum SwitcherEvent: Sendable, Equatable {
     case activationFailed(WindowID)
     case snapshot(Snapshot)
     case configChanged(SwitcherConfig)
+    /// La vista informa cuántas columnas tiene la grilla del Window Switcher (al mostrarse, al
+    /// actualizarse y cuando cambia el layout).
+    case switcherColumnsChanged(Int)
+    /// Clic en la celda de esta Window en el Window Switcher.
+    case windowClicked(WindowID)
 }
 
 public enum SwitcherEffect: Sendable, Equatable {
@@ -84,6 +89,8 @@ public struct SwitcherState: Sendable {
         var selected: Int
         /// La Switch Session arrancó con ⌘⇧⇥.
         let startsBackwards: Bool
+        /// Columnas de la grilla del Window Switcher, según la vista; nil hasta que las informe.
+        var columns: Int?
 
         init(windows: [WindowID], startsBackwards: Bool) {
             self.windows = windows
@@ -120,10 +127,38 @@ public struct SwitcherState: Sendable {
             (delayElapsed ? [] : [.cancelActivationTimer]) + (isSwitcherVisible ? [.hideSwitcher] : [])
         }
 
+        /// Terminar la Switch Session eligiendo esta Window. Con un solo ítem no se activa nada:
+        /// es la Window en la que ya está el usuario.
+        func finishEffects(activating target: WindowID?) -> [SwitcherEffect] {
+            guard windows.count >= 2, let target else { return closingEffects }
+            return closingEffects + [.activate(target)]
+        }
+
         mutating func move(by offset: Int) {
             guard !windows.isEmpty else { return }
-            selected = ((selected + offset) % windows.count + windows.count) % windows.count
-            shown?.selected = selected
+            select(((selected + offset) % windows.count + windows.count) % windows.count)
+        }
+
+        /// Mueve la selección una fila según las columnas que informó la vista, sin dar la vuelta.
+        /// Si ↓ cae en una columna que no existe en la última fila (incompleta), va al último ítem.
+        /// Devuelve false si no se movió.
+        mutating func moveRow(down: Bool) -> Bool {
+            guard let columns, columns > 0, !windows.isEmpty else { return false }
+            let lastRow = (windows.count - 1) / columns
+            let row = selected / columns
+            if down {
+                guard row < lastRow else { return false }
+                select(min(selected + columns, windows.count - 1))
+            } else {
+                guard row > 0 else { return false }
+                select(selected - columns)
+            }
+            return true
+        }
+
+        private mutating func select(_ index: Int) {
+            selected = index
+            shown?.selected = index
         }
 
         /// Muestra, actualiza u oculta el Window Switcher para que refleje la sesión en esta foto:
@@ -168,6 +203,19 @@ public struct SwitcherCore: Sendable {
             next.heldKeys.insert(.escape)
             return (next, [.consumeEvent] + session.closingEffects)
 
+        case .keyDown(let key, _, _) where arrowKeys.contains(key):
+            // Las flechas solo se consumen con el Window Switcher visible; si no, pasan a la App.
+            guard var session = next.session, session.isSwitcherVisible else { return (next, []) }
+            next.heldKeys.insert(key)
+            let moved: Bool
+            switch key {
+            case .leftArrow: session.move(by: -1); moved = true
+            case .rightArrow: session.move(by: 1); moved = true
+            default: moved = session.moveRow(down: key == .downArrow)
+            }
+            next.session = session
+            return (next, moved ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
+
         case .keyDown(let key, let modifiers, let isRepeat):
             guard isQuickSwitchHotkey(key, modifiers), next.config.allWindowsEnabled else { return (next, []) }
             next.heldKeys.insert(key)
@@ -187,9 +235,13 @@ public struct SwitcherCore: Sendable {
         case .modifiersChanged(let modifiers):
             guard let session = next.session, !modifiers.contains(.command) else { return (next, []) }
             next.session = nil
-            var effects = session.closingEffects
-            if session.windows.count >= 2, let target = session.selectedWindow { effects.append(.activate(target)) }
-            return (next, effects)
+            return (next, session.finishEffects(activating: session.selectedWindow))
+
+        case .windowClicked(let id):
+            // Igual que soltar el modificador con esa Window seleccionada.
+            guard let session = next.session, session.isSwitcherVisible else { return (next, []) }
+            next.session = nil
+            return (next, session.finishEffects(activating: id))
 
         case .activationDelayElapsed:
             guard var session = next.session else { return (next, []) }
@@ -225,8 +277,14 @@ public struct SwitcherCore: Sendable {
         case .configChanged(let config):
             next.config = config
             return (next, [])
+
+        case .switcherColumnsChanged(let columns):
+            next.session?.columns = columns
+            return (next, [])
         }
     }
+
+    private static let arrowKeys: Set<KeyCode> = [.leftArrow, .rightArrow, .upArrow, .downArrow]
 
     /// ⌘⇥ y ⌘⇧⇥: abren la Switch Session; dentro de ella, avanzan o retroceden la selección.
     private static func isQuickSwitchHotkey(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
