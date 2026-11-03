@@ -2,7 +2,7 @@ import Testing
 import SwitchaleCore
 
 private func windowlessItem(_ app: Int) -> SwitcherItem {
-    SwitcherItem(windowID: nil, appID: AppID(app), title: "app\(app)")
+    SwitcherItem(id: .windowlessApp(AppID(app)), appID: AppID(app), title: "app\(app)")
 }
 
 @Suite("Windowless Apps")

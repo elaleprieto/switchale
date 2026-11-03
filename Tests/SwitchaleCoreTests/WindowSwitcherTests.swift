@@ -9,7 +9,7 @@ func holdHotkey(_ core: inout SwitcherCore) -> [SwitcherEffect] {
 }
 
 func item(_ id: Int, app: Int = 1, title: String? = nil) -> SwitcherItem {
-    SwitcherItem(windowID: WindowID(id), appID: AppID(app), title: title ?? "w\(id)")
+    SwitcherItem(id: .window(WindowID(id)), appID: AppID(app), title: title ?? "w\(id)")
 }
 
 @Suite("Window Switcher: visibilidad")

@@ -56,17 +56,46 @@ public struct SwitcherContent: Sendable, Equatable {
     }
 }
 
-/// Un ítem del Window Switcher: una Window, o una Windowless App (`windowID == nil`).
+/// Qué es un ítem del Window Switcher: una Window o una Windowless App.
+public enum ItemID: Sendable, Hashable {
+    case window(WindowID)
+    case windowlessApp(AppID)
+}
+
+/// Un ítem del Window Switcher.
 public struct SwitcherItem: Sendable, Equatable {
-    public var windowID: WindowID?
+    public var id: ItemID
     public var appID: AppID
     /// Título de la Window, o el nombre de la App si la Window no tiene título.
     public var title: String
 
-    public init(windowID: WindowID?, appID: AppID, title: String) {
-        self.windowID = windowID
+    public init(id: ItemID, appID: AppID, title: String) {
+        self.id = id
         self.appID = appID
         self.title = title
+    }
+}
+
+/// Los ítems de una Switch Session en orden: primero las Windows en Recency Order, después las
+/// Windowless Apps. Toda la aritmética de índices vive acá.
+struct ItemList: Equatable {
+    private(set) var ids: [ItemID]
+
+    init(windows: [WindowID], windowless: [AppID]) {
+        ids = windows.map(ItemID.window) + windowless.map(ItemID.windowlessApp)
+    }
+
+    var count: Int { ids.count }
+
+    subscript(index: Int) -> ItemID? { ids.indices.contains(index) ? ids[index] : nil }
+
+    func index(of id: ItemID) -> Int? { ids.firstIndex(of: id) }
+
+    /// Con ⌘⇥, el segundo ítem en Recency Order (un Quick Switch); con ⌘⇧⇥, el último.
+    /// Si hay uno solo, ese.
+    func initialSelection(backwards: Bool) -> Int {
+        if backwards { return max(0, count - 1) }
+        return count >= 2 ? 1 : 0
     }
 }
 
@@ -83,54 +112,33 @@ public struct SwitcherState: Sendable {
         var delayElapsed = false
         /// Lo que muestra el Window Switcher, o nil si no está visible.
         private var shown: SwitcherContent?
-        /// Windows de la Switch Session, en Recency Order.
-        var windows: [WindowID]
-        /// Windowless Apps, después de todas las Windows.
-        var windowless: [AppID]
+        /// Ítems de la Switch Session.
+        var items: ItemList
         var selected: Int
         /// La Switch Session arrancó con ⌘⇧⇥.
         let startsBackwards: Bool
 
-        init(windows: [WindowID], windowless: [AppID], startsBackwards: Bool) {
-            self.windows = windows
-            self.windowless = windowless
+        init(items: ItemList, startsBackwards: Bool) {
+            self.items = items
             self.startsBackwards = startsBackwards
-            selected = Self.initialSelection(total: windows.count + windowless.count, backwards: startsBackwards)
+            selected = items.initialSelection(backwards: startsBackwards)
         }
-
-        var itemCount: Int { windows.count + windowless.count }
 
         var isSwitcherVisible: Bool { shown != nil }
 
-        /// Con ⌘⇥, el segundo ítem en Recency Order (un Quick Switch); con ⌘⇧⇥, el último.
-        /// Si hay uno solo, ese. Los ítems son Windows y Windowless Apps.
-        private static func initialSelection(total: Int, backwards: Bool) -> Int {
-            if backwards { return max(0, total - 1) }
-            return total >= 2 ? 1 : 0
-        }
+        var selectedItem: ItemID? { items[selected] }
 
-        /// Cambian las Windows: la selección sigue a su Window; si esa se fue, queda en la misma
+        /// Cambian los ítems: la selección sigue a su ítem; si ese se fue, queda en la misma
         /// posición (o en la última, si la grilla se achicó).
-        mutating func replaceWindows(with newWindows: [WindowID], windowless newWindowless: [AppID]) {
-            let newTotal = newWindows.count + newWindowless.count
-            if itemCount == 0 {
-                selected = Self.initialSelection(total: newTotal, backwards: startsBackwards)
-            } else if let window = selectedWindow, let index = newWindows.firstIndex(of: window) {
+        mutating func replaceItems(with newItems: ItemList) {
+            if items.count == 0 {
+                selected = newItems.initialSelection(backwards: startsBackwards)
+            } else if let item = selectedItem, let index = newItems.index(of: item) {
                 selected = index
-            } else if let app = selectedWindowlessApp, let index = newWindowless.firstIndex(of: app) {
-                selected = newWindows.count + index
             } else {
-                selected = max(0, min(selected, newTotal - 1))
+                selected = max(0, min(selected, newItems.count - 1))
             }
-            windows = newWindows
-            windowless = newWindowless
-        }
-
-        var selectedWindow: WindowID? { windows.indices.contains(selected) ? windows[selected] : nil }
-
-        var selectedWindowlessApp: AppID? {
-            let index = selected - windows.count
-            return windowless.indices.contains(index) ? windowless[index] : nil
+            items = newItems
         }
 
         /// Lo que hay que deshacer al terminar la Switch Session.
@@ -139,15 +147,15 @@ public struct SwitcherState: Sendable {
         }
 
         mutating func move(by offset: Int) {
-            guard itemCount > 0 else { return }
-            selected = ((selected + offset) % itemCount + itemCount) % itemCount
+            guard items.count > 0 else { return }
+            selected = ((selected + offset) % items.count + items.count) % items.count
             shown?.selected = selected
         }
 
         /// Muestra, actualiza u oculta el Window Switcher para que refleje la sesión en esta foto:
         /// está visible si venció el Activation Delay y hay ítems.
         mutating func syncSwitcher(with snapshot: Snapshot) -> [SwitcherEffect] {
-            let content = SwitcherContent(snapshot.items(for: windows, windowless: windowless), selected: selected)
+            let content = SwitcherContent(snapshot.items(for: items), selected: selected)
             let target = delayElapsed && !content.items.isEmpty ? content : nil
             defer { shown = target }
             switch (shown, target) {
@@ -195,7 +203,7 @@ public struct SwitcherCore: Sendable {
                 return (next, session.isSwitcherVisible ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
             }
             guard !isRepeat else { return (next, [.consumeEvent]) }
-            next.session = .init(windows: eligibleWindows(next), windowless: windowlessApps(in: next.snapshot, scope: .allWindows), startsBackwards: modifiers.contains(.shift))
+            next.session = .init(items: items(next), startsBackwards: modifiers.contains(.shift))
             return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelayMilliseconds)])
 
         case .keyUp(let key):
@@ -206,11 +214,11 @@ public struct SwitcherCore: Sendable {
             guard let session = next.session, !modifiers.contains(.command) else { return (next, []) }
             next.session = nil
             var effects = session.closingEffects
-            if session.itemCount >= 2 {
-                if let target = session.selectedWindow {
-                    effects.append(.activate(target))
-                } else if let app = session.selectedWindowlessApp {
-                    effects.append(.activateApp(app))
+            if session.items.count >= 2 {
+                switch session.selectedItem {
+                case .window(let id)?: effects.append(.activate(id))
+                case .windowlessApp(let app)?: effects.append(.activateApp(app))
+                case nil: break
                 }
             }
             return (next, effects)
@@ -244,7 +252,7 @@ public struct SwitcherCore: Sendable {
                 .sorted { $0.stackIndex < $1.stackIndex }
             next.recency += unknown.map(\.id)
             guard var session = next.session else { return (next, []) }
-            session.replaceWindows(with: eligibleWindows(next), windowless: windowlessApps(in: next.snapshot, scope: .allWindows))
+            session.replaceItems(with: items(next))
             let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
@@ -268,6 +276,14 @@ public struct SwitcherCore: Sendable {
         return snapshot.windowlessApps.filter { !withWindows.contains($0) }
     }
 
+    /// Los ítems de una Switch Session con la foto actual (hoy siempre en el Scope All Windows).
+    private static func items(_ state: SwitcherState) -> ItemList {
+        ItemList(
+            windows: eligibleWindows(state),
+            windowless: windowlessApps(in: state.snapshot, scope: .allWindows)
+        )
+    }
+
     /// Reglas fijas de inclusión: Space y pantalla actuales, sin Minimized ni Windows de Hidden Apps.
     private static func eligibleWindows(_ state: SwitcherState) -> [WindowID] {
         let windowsByID = state.snapshot.windowsByID
@@ -284,17 +300,20 @@ public struct SwitcherCore: Sendable {
 }
 
 extension Snapshot {
-    /// Los ítems del Window Switcher para estas Windows, en el mismo orden; las que no están en la
-    /// foto se omiten.
-    func items(for windows: [WindowID], windowless: [AppID] = []) -> [SwitcherItem] {
+    /// Los ítems del Window Switcher para estos ítems, en el mismo orden; las Windows que no están
+    /// en la foto se omiten.
+    func items(for list: ItemList) -> [SwitcherItem] {
         let windowsByID = windowsByID
         let appNames = Dictionary(apps.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-        let windowItems = windows.compactMap { id -> SwitcherItem? in
-            guard let window = windowsByID[id] else { return nil }
-            let title = window.title.isEmpty ? appNames[window.appID] ?? "" : window.title
-            return SwitcherItem(windowID: id, appID: window.appID, title: title)
+        return list.ids.compactMap { id in
+            switch id {
+            case .window(let windowID):
+                guard let window = windowsByID[windowID] else { return nil }
+                let title = window.title.isEmpty ? appNames[window.appID] ?? "" : window.title
+                return SwitcherItem(id: id, appID: window.appID, title: title)
+            case .windowlessApp(let app):
+                return SwitcherItem(id: id, appID: app, title: appNames[app] ?? "")
+            }
         }
-        let appItems = windowless.map { SwitcherItem(windowID: nil, appID: $0, title: appNames[$0] ?? "") }
-        return windowItems + appItems
     }
 }
