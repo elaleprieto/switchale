@@ -36,8 +36,10 @@ func core(_ windows: [Window], windowless: [Int] = [], config: SwitcherConfig = 
 }
 
 /// Núcleo con esta foto y esta App activa.
-func core(_ windows: [Window], config: SwitcherConfig = .init(), activeApp: Int) -> SwitcherCore {
-    var core = core(windows, config: config)
+func core(
+    _ windows: [Window], windowless: [Int] = [], config: SwitcherConfig = .init(), activeApp: Int
+) -> SwitcherCore {
+    var core = core(windows, windowless: windowless, config: config)
     _ = core.send(.appActivated(AppID(activeApp)))
     return core
 }

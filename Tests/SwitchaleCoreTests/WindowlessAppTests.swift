@@ -71,4 +71,51 @@ struct WindowlessAppTests {
         var c = core([], windowless: [8])
         #expect(c.send(.appActivationFailed(AppID(8))) == [.refreshSnapshot])
     }
+
+    @Test("Una Switch Session de Current App no muestra las Windowless Apps")
+    func notInCurrentAppSession() {
+        var c = core([win(1, stack: 0), win(2, app: 2, stack: 1), win(3, stack: 2)], windowless: [8], activeApp: 1)
+        _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
+        deliverFreshSnapshot(&c)
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(3)], selected: 1, screen: mainScreen))])
+    }
+
+    @Test("Un Quick Switch de Current App con una sola Window no activa una Windowless App")
+    func currentAppQuickSwitchIgnoresWindowless() {
+        var c = core([win(1, stack: 0), win(2, app: 2, stack: 1)], windowless: [8], activeApp: 1)
+        _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
+        _ = c.send(.keyUp(.grave))
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer])
+    }
+}
+
+@Suite("Windowless Apps en la grilla")
+struct WindowlessAppGridTests {
+    /// Dos Windows y dos Windowless Apps (índices 2 y 3) en una grilla de dos columnas.
+    private func gridWithWindowless() -> SwitcherCore {
+        var c = core([win(1, stack: 0), win(2, stack: 1)], windowless: [8, 9])
+        holdHotkey(&c)
+        _ = c.send(.switcherColumnsChanged(2))
+        return c
+    }
+
+    @Test("↓ baja a la Windowless App de la fila siguiente y soltar el modificador la activa")
+    func downArrowToWindowless() {
+        var c = gridWithWindowless()
+        #expect(c.send(.keyDown(.downArrow, [.command], isRepeat: false)) == [.consumeEvent, .selectItem(3)])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activateApp(AppID(9))])
+    }
+
+    @Test("→ avanza de la última Window a la primera Windowless App")
+    func rightArrowToWindowless() {
+        var c = gridWithWindowless()
+        #expect(c.send(.keyDown(.rightArrow, [.command], isRepeat: false)) == [.consumeEvent, .selectItem(2)])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activateApp(AppID(8))])
+    }
+
+    @Test("Clic en la celda de una Windowless App la activa como el Dock y oculta el Window Switcher")
+    func clickWindowless() {
+        var c = gridWithWindowless()
+        #expect(c.send(.itemClicked(.windowlessApp(AppID(8)))) == [.hideSwitcher, .activateApp(AppID(8))])
+    }
 }
