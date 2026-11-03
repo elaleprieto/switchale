@@ -15,6 +15,12 @@ enum LoginItem {
         return defaults.bool(forKey: preferenceKey)
     }
 
+    /// El estado del login item según macOS. Es lo que muestra Preferencias: si registrarlo o
+    /// quitarlo falla, difiere de la preferencia del usuario.
+    static func status() -> LoginItemStatus {
+        status(of: SMAppService.mainApp)
+    }
+
     /// Guarda la preferencia (toggle de Preferencias) y registra o quita el login item.
     static func setWanted(_ wanted: Bool, defaults: UserDefaults = .standard) {
         defaults.set(wanted, forKey: preferenceKey)

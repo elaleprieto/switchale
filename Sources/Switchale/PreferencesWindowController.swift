@@ -20,18 +20,12 @@ final class PreferencesWindowController: NSWindowController {
     private let includesHiddenApps = NSButton(checkboxWithTitle: "Windows de Hidden Apps", target: nil, action: nil)
     private let includesOtherScreens = NSButton(checkboxWithTitle: "Windows de otras pantallas", target: nil, action: nil)
     private let launchAtLogin = NSButton(checkboxWithTitle: "Iniciar switchale al loguearse", target: nil, action: nil)
+    private let launchAtLoginNote = NSTextField(labelWithString: "Falta aprobarlo en Configuración del Sistema › General › Ítems de inicio")
     private let thumbnailSlider = NSSlider()
 
     private static let panelScreens: [(PanelScreen, String)] = [
         (.focusedWindow, "La de la Window con foco"), (.mouse, "La del mouse"), (.primary, "La principal"),
     ]
-    private static let modifierTitles: [String] = ["⌘ Command", "⌥ Option", "⌃ Control", "⇧ Shift"]
-    private static let keyTitles: [String] = ["⇥ Tab", "` Acento grave"]
-    private static let scopeTitles: [Scope: String] = [.allWindows: "All Windows", .currentApp: "Current App"]
-    /// El slider del Activation Delay avanza de a 10 ms.
-    private static let activationDelayStep = 10
-    /// El slider de Thumbnail avanza de a 16 puntos de ancho.
-    private static let thumbnailWidthStep = 16
 
     init() {
         let window = NSWindow(
@@ -76,7 +70,7 @@ final class PreferencesWindowController: NSWindowController {
 
     /// Muestra los valores guardados y trae la ventana al frente (la app no tiene ícono en el Dock).
     func present() {
-        render(SwitcherPreferences.load(), launchAtLogin: LoginItem.isWanted())
+        render(SwitcherPreferences.load(), loginItem: LoginItem.status())
         if window?.isVisible != true { window?.center() }
         showWindow(nil)
         NSApp.activate()
@@ -106,17 +100,17 @@ final class PreferencesWindowController: NSWindowController {
         for scope in Scope.allCases {
             let controls = ScopeControls(
                 enabled: NSButton(checkboxWithTitle: "Activado", target: self, action: #selector(changed)),
-                modifier: popUp(Self.modifierTitles),
-                key: popUp(Self.keyTitles)
+                modifier: popUp(HotkeyModifier.allCases.map(\.title)),
+                key: popUp(HotkeyKey.allCases.map(\.title))
             )
             scopeControls[scope] = controls
             let hotkey = NSStackView(views: [controls.enabled, controls.modifier, controls.key])
             hotkey.spacing = 8
-            rows.append([label(Self.scopeTitles[scope] ?? ""), hotkey])
+            rows.append([label(scope.title), hotkey])
         }
 
-        activationDelaySlider.minValue = Double(SwitcherPreferences.activationDelayRange.lowerBound)
-        activationDelaySlider.maxValue = Double(SwitcherPreferences.activationDelayRange.upperBound)
+        activationDelaySlider.minValue = Double(ActivationDelay.range.lowerBound)
+        activationDelaySlider.maxValue = Double(ActivationDelay.range.upperBound)
         activationDelaySlider.isContinuous = true
         activationDelaySlider.target = self
         activationDelaySlider.action = #selector(changed)
@@ -142,6 +136,9 @@ final class PreferencesWindowController: NSWindowController {
         launchAtLogin.target = self
         launchAtLogin.action = #selector(launchAtLoginChanged)
         rows.append([label("Inicio"), launchAtLogin])
+        launchAtLoginNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        launchAtLoginNote.textColor = .secondaryLabelColor
+        rows.append([NSGridCell.emptyContentView, launchAtLoginNote])
 
         return grid(rows)
     }
@@ -150,7 +147,7 @@ final class PreferencesWindowController: NSWindowController {
         let range = ThumbnailSize.widthRange
         thumbnailSlider.minValue = Double(range.lowerBound)
         thumbnailSlider.maxValue = Double(range.upperBound)
-        thumbnailSlider.numberOfTickMarks = (range.upperBound - range.lowerBound) / Self.thumbnailWidthStep + 1
+        thumbnailSlider.numberOfTickMarks = (range.upperBound - range.lowerBound) / ThumbnailSize.widthStep + 1
         thumbnailSlider.allowsTickMarkValuesOnly = true
         thumbnailSlider.isContinuous = true
         thumbnailSlider.target = self
@@ -176,6 +173,8 @@ final class PreferencesWindowController: NSWindowController {
 
     private func popUp(_ titles: [String]) -> NSPopUpButton {
         let popUp = NSPopUpButton()
+        // Las opciones que repetirían el Hotkey del otro Scope se deshabilitan en `render`.
+        popUp.autoenablesItems = false
         popUp.addItems(withTitles: titles)
         popUp.target = self
         popUp.action = #selector(changed)
@@ -184,25 +183,33 @@ final class PreferencesWindowController: NSWindowController {
 
     // MARK: - Valores
 
-    /// Pone los controles en estos valores.
-    private func render(_ config: SwitcherConfig, launchAtLogin wanted: Bool) {
+    /// Pone los controles en estos valores y el login item en su estado real.
+    private func render(_ config: SwitcherConfig, loginItem: LoginItemStatus) {
         for scope in Scope.allCases {
             guard let controls = scopeControls[scope] else { continue }
-            let hotkey = config.hotkey(for: scope)
-            let enabled = config.enabledScopes.contains(scope)
-            controls.enabled.state = enabled ? .on : .off
-            controls.modifier.selectItem(at: Hotkey.modifierChoices.firstIndex(of: hotkey.modifier) ?? 0)
-            controls.key.selectItem(at: Hotkey.keyChoices.firstIndex(of: hotkey.key) ?? 0)
-            controls.modifier.isEnabled = enabled
-            controls.key.isEnabled = enabled
+            let hotkey = config.hotkeys[scope]
+            controls.enabled.state = config.enabledScopes.contains(scope) ? .on : .off
+            controls.modifier.selectItem(at: HotkeyModifier.allCases.firstIndex(of: hotkey.modifier) ?? 0)
+            controls.key.selectItem(at: HotkeyKey.allCases.firstIndex(of: hotkey.key) ?? 0)
+            // Un Hotkey ya usado por el otro Scope no se puede elegir (aunque ese Scope esté
+            // desactivado). El Hotkey de un Scope desactivado se puede cambiar: vale al activarlo.
+            for (index, modifier) in HotkeyModifier.allCases.enumerated() {
+                controls.modifier.item(at: index)?.isEnabled =
+                    config.isHotkeyAvailable(Hotkey(modifier: modifier, key: hotkey.key), for: scope)
+            }
+            for (index, key) in HotkeyKey.allCases.enumerated() {
+                controls.key.item(at: index)?.isEnabled =
+                    config.isHotkeyAvailable(Hotkey(modifier: hotkey.modifier, key: key), for: scope)
+            }
         }
-        activationDelaySlider.integerValue = config.activationDelayMilliseconds
-        activationDelayLabel.stringValue = "\(config.activationDelayMilliseconds) ms"
+        activationDelaySlider.integerValue = config.activationDelay.milliseconds
+        activationDelayLabel.stringValue = "\(config.activationDelay.milliseconds) ms"
         panelScreenPopUp.selectItem(at: Self.panelScreens.firstIndex { $0.0 == config.panelScreen } ?? 0)
         includesMinimized.state = config.includesMinimizedWindows ? .on : .off
         includesHiddenApps.state = config.includesHiddenApps ? .on : .off
         includesOtherScreens.state = config.includesOtherScreens ? .on : .off
-        launchAtLogin.state = wanted ? .on : .off
+        launchAtLogin.state = loginItem.isRegistered ? .on : .off
+        launchAtLoginNote.isHidden = loginItem != .requiresApproval
         thumbnailSlider.integerValue = config.thumbnailSize.width
     }
 
@@ -212,12 +219,11 @@ final class PreferencesWindowController: NSWindowController {
         for scope in Scope.allCases {
             guard let controls = scopeControls[scope] else { continue }
             if controls.enabled.state == .off { config.enabledScopes.remove(scope) }
-            let modifier = Hotkey.modifierChoices[max(0, controls.modifier.indexOfSelectedItem)]
-            let key = Hotkey.keyChoices[max(0, controls.key.indexOfSelectedItem)]
+            let modifier = HotkeyModifier.allCases[max(0, controls.modifier.indexOfSelectedItem)]
+            let key = HotkeyKey.allCases[max(0, controls.key.indexOfSelectedItem)]
             config.hotkeys[scope] = Hotkey(modifier: modifier, key: key)
         }
-        let step = Self.activationDelayStep
-        config.activationDelayMilliseconds = Int((activationDelaySlider.doubleValue / Double(step)).rounded()) * step
+        config.activationDelay = ActivationDelay(milliseconds: Int(activationDelaySlider.doubleValue.rounded()))
         config.panelScreen = Self.panelScreens[max(0, panelScreenPopUp.indexOfSelectedItem)].0
         config.includesMinimizedWindows = includesMinimized.state == .on
         config.includesHiddenApps = includesHiddenApps.state == .on
@@ -231,16 +237,49 @@ final class PreferencesWindowController: NSWindowController {
     @objc private func changed() {
         let config = configFromControls()
         SwitcherPreferences.save(config)
-        render(config, launchAtLogin: launchAtLogin.state == .on)
+        render(config, loginItem: LoginItem.status())
     }
 
+    /// Después de registrar o quitar el login item, el checkbox muestra lo que quedó en macOS.
     @objc private func launchAtLoginChanged() {
         LoginItem.setWanted(launchAtLogin.state == .on)
+        render(SwitcherPreferences.load(), loginItem: LoginItem.status())
     }
 
     @objc private func restoreDefaults() {
         SwitcherPreferences.restoreDefaults()
         LoginItem.restoreDefault()
-        render(SwitcherPreferences.load(), launchAtLogin: LoginItem.isWanted())
+        render(SwitcherPreferences.load(), loginItem: LoginItem.status())
+    }
+}
+
+// MARK: - Títulos
+
+private extension Scope {
+    var title: String {
+        switch self {
+        case .allWindows: "All Windows"
+        case .currentApp: "Current App"
+        }
+    }
+}
+
+private extension HotkeyModifier {
+    var title: String {
+        switch self {
+        case .command: "⌘ Command"
+        case .option: "⌥ Option"
+        case .control: "⌃ Control"
+        case .shift: "⇧ Shift"
+        }
+    }
+}
+
+private extension HotkeyKey {
+    var title: String {
+        switch self {
+        case .tab: "⇥ Tab"
+        case .grave: "` Acento grave"
+        }
     }
 }

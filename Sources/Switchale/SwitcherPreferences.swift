@@ -5,109 +5,81 @@ import SwitchaleCore
 /// Preferencias (o `defaults write <bundle id> <clave> ...`); el Orchestrator la relee en cada
 /// cambio y se la pasa al núcleo. Una clave ausente o inválida vale lo de `SwitcherConfig()`.
 enum SwitcherPreferences {
-    /// Bool por Scope; por defecto true.
-    static func enabledKey(_ scope: Scope) -> String { "\(name(of: scope))Enabled" }
-    /// "command", "option", "control" o "shift".
-    static func modifierKey(_ scope: Scope) -> String { "\(name(of: scope))HotkeyModifier" }
-    /// "tab" o "grave".
-    static func keyKey(_ scope: Scope) -> String { "\(name(of: scope))HotkeyKey" }
-    /// Int, en milisegundos; por defecto 80.
-    static let activationDelayKey = "activationDelayMilliseconds"
-    /// "focusedWindow" (por defecto), "mouse" o "primary".
-    static let panelScreenKey = "panelScreen"
-    /// Bool; por defecto true.
-    static let includesMinimizedWindowsKey = "includesMinimizedWindows"
-    /// Bool; por defecto true.
-    static let includesHiddenAppsKey = "includesHiddenApps"
-    /// Bool; por defecto true.
-    static let includesOtherScreensKey = "includesOtherScreens"
-    /// Int, ancho de la Thumbnail en puntos (`ThumbnailSize.widthRange`); por defecto 160.
-    static let thumbnailWidthKey = "thumbnailWidth"
-
-    /// Valores admitidos del Activation Delay en Preferencias, en milisegundos.
-    static let activationDelayRange = 0...500
-
     static func load(defaults: UserDefaults = .standard) -> SwitcherConfig {
         var config = SwitcherConfig()
-        for scope in Scope.allCases {
-            if defaults.object(forKey: enabledKey(scope)) != nil, !defaults.bool(forKey: enabledKey(scope)) {
-                config.enabledScopes.remove(scope)
-            }
-            let modifier = defaults.string(forKey: modifierKey(scope)).flatMap(modifier(named:))
-            let key = defaults.string(forKey: keyKey(scope)).flatMap(key(named:))
-            let fallback = scope.defaultHotkey
-            config.hotkeys[scope] = Hotkey(modifier: modifier ?? fallback.modifier, key: key ?? fallback.key)
-        }
-        if defaults.object(forKey: activationDelayKey) != nil {
-            let delay = defaults.integer(forKey: activationDelayKey)
-            config.activationDelayMilliseconds = min(max(delay, activationDelayRange.lowerBound), activationDelayRange.upperBound)
-        }
-        config.panelScreen = defaults.string(forKey: panelScreenKey).flatMap(PanelScreen.init(rawValue:)) ?? .focusedWindow
-        config.includesMinimizedWindows = bool(defaults, includesMinimizedWindowsKey) ?? config.includesMinimizedWindows
-        config.includesHiddenApps = bool(defaults, includesHiddenAppsKey) ?? config.includesHiddenApps
-        config.includesOtherScreens = bool(defaults, includesOtherScreensKey) ?? config.includesOtherScreens
-        if defaults.object(forKey: thumbnailWidthKey) != nil {
-            config.thumbnailSize = ThumbnailSize(width: defaults.integer(forKey: thumbnailWidthKey))
+        for setting in settings {
+            if let stored = defaults.object(forKey: setting.key) { setting.read(stored, &config) }
         }
         return config
     }
 
     static func save(_ config: SwitcherConfig, defaults: UserDefaults = .standard) {
-        for scope in Scope.allCases {
-            let hotkey = config.hotkey(for: scope)
-            defaults.set(config.enabledScopes.contains(scope), forKey: enabledKey(scope))
-            defaults.set(name(of: hotkey.modifier), forKey: modifierKey(scope))
-            defaults.set(name(of: hotkey.key), forKey: keyKey(scope))
-        }
-        defaults.set(config.activationDelayMilliseconds, forKey: activationDelayKey)
-        defaults.set(config.panelScreen.rawValue, forKey: panelScreenKey)
-        defaults.set(config.includesMinimizedWindows, forKey: includesMinimizedWindowsKey)
-        defaults.set(config.includesHiddenApps, forKey: includesHiddenAppsKey)
-        defaults.set(config.includesOtherScreens, forKey: includesOtherScreensKey)
-        defaults.set(config.thumbnailSize.width, forKey: thumbnailWidthKey)
+        for setting in settings { defaults.set(setting.write(config), forKey: setting.key) }
     }
 
     /// Borra todas las claves de configuración: vuelven los valores de la spec (`SwitcherConfig()`).
     static func restoreDefaults(defaults: UserDefaults = .standard) {
-        var keys = [
-            activationDelayKey, panelScreenKey, includesMinimizedWindowsKey, includesHiddenAppsKey,
-            includesOtherScreensKey, thumbnailWidthKey,
-        ]
-        for scope in Scope.allCases { keys += [enabledKey(scope), modifierKey(scope), keyKey(scope)] }
-        keys.forEach(defaults.removeObject(forKey:))
+        for setting in settings { defaults.removeObject(forKey: setting.key) }
     }
 
-    // MARK: - Nombres guardados
+    // MARK: - Claves
 
-    private static func name(of scope: Scope) -> String {
-        switch scope {
-        case .allWindows: "allWindows"
-        case .currentApp: "currentApp"
+    /// Una clave de `UserDefaults` y cómo pasa su valor a la configuración y de vuelta.
+    private struct Setting {
+        let key: String
+        /// Aplica el valor guardado a la configuración; si no es del tipo esperado, no hace nada.
+        let read: (Any, inout SwitcherConfig) -> Void
+        let write: (SwitcherConfig) -> Any
+
+        init<Stored>(
+            _ key: String, get: @escaping (SwitcherConfig) -> Stored, set: @escaping (inout SwitcherConfig, Stored) -> Void
+        ) {
+            self.key = key
+            read = { stored, config in if let value = stored as? Stored { set(&config, value) } }
+            write = get
+        }
+
+        /// Un valor que se guarda tal cual (Bool).
+        static func value<Value>(_ key: String, _ path: WritableKeyPath<SwitcherConfig, Value>) -> Setting {
+            Setting(key, get: { $0[keyPath: path] }, set: { $0[keyPath: path] = $1 })
+        }
+
+        /// Un valor que se guarda con su nombre (`rawValue`); un nombre desconocido se ignora.
+        static func named<Value: RawRepresentable>(_ key: String, _ path: WritableKeyPath<SwitcherConfig, Value>) -> Setting
+        where Value.RawValue == String {
+            Setting(key, get: { $0[keyPath: path].rawValue }, set: { config, name in
+                if let value = Value(rawValue: name) { config[keyPath: path] = value }
+            })
         }
     }
 
-    private static let modifierNames: [(Modifiers, String)] = [
-        (.command, "command"), (.option, "option"), (.control, "control"), (.shift, "shift"),
-    ]
-    private static let keyNames: [(KeyCode, String)] = [(.tab, "tab"), (.grave, "grave")]
-
-    private static func name(of modifier: Modifiers) -> String {
-        modifierNames.first { $0.0 == modifier }?.1 ?? "command"
-    }
-
-    private static func modifier(named name: String) -> Modifiers? {
-        modifierNames.first { $0.1 == name }?.0
-    }
-
-    private static func name(of key: KeyCode) -> String {
-        keyNames.first { $0.0 == key }?.1 ?? "tab"
-    }
-
-    private static func key(named name: String) -> KeyCode? {
-        keyNames.first { $0.1 == name }?.0
-    }
-
-    private static func bool(_ defaults: UserDefaults, _ key: String) -> Bool? {
-        defaults.object(forKey: key) == nil ? nil : defaults.bool(forKey: key)
+    /// Todas las claves. Los nombres son los de la sección "Configuración del Window Switcher" del
+    /// README.
+    private static var settings: [Setting] {
+        Scope.allCases.flatMap { scope in
+            [
+                // Bool; por defecto true.
+                Setting("\(scope.rawValue)Enabled", get: { $0.enabledScopes.contains(scope) }, set: { config, enabled in
+                    if enabled { config.enabledScopes.insert(scope) } else { config.enabledScopes.remove(scope) }
+                }),
+                // `HotkeyModifier`: "command", "option", "control" o "shift".
+                .named("\(scope.rawValue)HotkeyModifier", \.hotkeys[scope].modifier),
+                // `HotkeyKey`: "tab" o "grave".
+                .named("\(scope.rawValue)HotkeyKey", \.hotkeys[scope].key),
+            ]
+        } + [
+            // Int, en milisegundos (`ActivationDelay`); por defecto 80.
+            Setting("activationDelayMilliseconds", get: { $0.activationDelay.milliseconds }, set: {
+                $0.activationDelay = ActivationDelay(milliseconds: $1)
+            }),
+            // `PanelScreen`: "focusedWindow" (por defecto), "mouse" o "primary".
+            .named("panelScreen", \.panelScreen),
+            // Bool; por defecto true.
+            .value("includesMinimizedWindows", \.includesMinimizedWindows),
+            .value("includesHiddenApps", \.includesHiddenApps),
+            .value("includesOtherScreens", \.includesOtherScreens),
+            // Int, ancho de la Thumbnail en puntos (`ThumbnailSize`); por defecto 160.
+            Setting("thumbnailWidth", get: { $0.thumbnailSize.width }, set: { $0.thumbnailSize = ThumbnailSize(width: $1) }),
+        ]
     }
 }
