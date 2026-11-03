@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import SwitchaleCore
 
 /// Ejecuta el efecto "activar Window": muestra la App, restaura la Window, sube solo esa Window y le da foco.
 ///
@@ -17,6 +18,7 @@ struct WindowActivator {
     func activate(_ handle: WindowHandle) -> Bool {
         let element = handle.element
         let app = handle.app
+        if app.isSwitchale { return activateOwn(handle.id) }
         guard !app.isTerminated, axAttribute(element, kAXRoleAttribute) != nil else { return false }
         let wasHidden = app.isHidden
         let wasMinimized = axIsMinimized(element)
@@ -61,5 +63,16 @@ struct WindowActivator {
         AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
         NSApplication.shared.yieldActivation(to: app)
         app.activate(from: NSRunningApplication.current, options: [])
+    }
+
+    /// Una Window de switchale se activa con AppKit: AX contra el propio proceso desde el main
+    /// thread bloquea hasta el timeout.
+    private func activateOwn(_ id: WindowID) -> Bool {
+        guard let window = NSApp.window(withWindowNumber: id.rawValue) else { return false }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        NSApp.unhide(nil)
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        return true
     }
 }

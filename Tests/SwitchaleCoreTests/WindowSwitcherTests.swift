@@ -228,3 +228,238 @@ struct WindowSwitcherEscapeTests {
         #expect(c.send(.keyUp(.escape)) == [])
     }
 }
+
+/// Abre una Switch Session con `count` Windows y el Window Switcher visible, con la grilla en
+/// `columns` columnas y la selección en el índice `selected`.
+func gridSession(_ count: Int, columns: Int, selected: Int) -> SwitcherCore {
+    var c = core((1...count).map { win($0, stack: $0 - 1) })
+    holdHotkey(&c)
+    _ = c.send(.switcherColumnsChanged(columns))
+    // La sesión arranca en el índice 1 (o 0 si hay un solo ítem); ⇥ avanza de a uno.
+    let start = count >= 2 ? 1 : 0
+    for _ in 0..<((selected - start + count) % count) { _ = c.send(.keyDown(.tab, [.command], isRepeat: false)) }
+    return c
+}
+
+/// Aprieta una tecla con ⌘ mantenido.
+func pressHoldingCommand(_ key: KeyCode, _ c: inout SwitcherCore) -> [SwitcherEffect] {
+    c.send(.keyDown(key, [.command], isRepeat: false))
+}
+
+@Suite("Window Switcher: flechas izquierda y derecha")
+struct WindowSwitcherHorizontalArrowTests {
+    @Test("→ avanza un ítem, como ⇥, y da la vuelta al final")
+    func rightWraps() {
+        var c = gridSession(3, columns: 3, selected: 1)
+        #expect(pressHoldingCommand(.rightArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [.consumeEvent, .selectItem(0)])
+    }
+
+    @Test("← retrocede un ítem, como ⇧⇥, y da la vuelta al principio")
+    func leftWraps() {
+        var c = gridSession(3, columns: 3, selected: 1)
+        #expect(pressHoldingCommand(.leftArrow, &c) == [.consumeEvent, .selectItem(0)])
+        #expect(pressHoldingCommand(.leftArrow, &c) == [.consumeEvent, .selectItem(2)])
+    }
+
+    @Test("← y → avanzan por ítem y cruzan de fila")
+    func horizontalCrossesRows() {
+        var c = gridSession(5, columns: 2, selected: 1)
+        #expect(pressHoldingCommand(.rightArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.leftArrow, &c) == [.consumeEvent, .selectItem(1)])
+    }
+
+    @Test("Soltar el modificador después de mover con flechas activa la Window seleccionada")
+    func releaseAfterArrows() {
+        var c = gridSession(3, columns: 3, selected: 1)
+        _ = pressHoldingCommand(.rightArrow, &c)
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
+    }
+
+    @Test("Mantener una flecha apretada sigue moviendo la selección, y su keyUp se consume")
+    func arrowAutorepeatAndKeyUp() {
+        var c = gridSession(3, columns: 3, selected: 1)
+        #expect(c.send(.keyDown(.rightArrow, [.command], isRepeat: true)) == [.consumeEvent, .selectItem(2)])
+        #expect(c.send(.keyUp(.rightArrow)) == [.consumeEvent])
+    }
+}
+
+@Suite("Window Switcher: flechas arriba y abajo")
+struct WindowSwitcherVerticalArrowTests {
+    // Grilla de 7 ítems en 3 columnas:
+    //   0 1 2
+    //   3 4 5
+    //   6
+
+    @Test("↓ baja una fila según las columnas informadas")
+    func downMovesOneRow() {
+        var c = gridSession(7, columns: 3, selected: 1)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(4)])
+    }
+
+    @Test("↑ sube una fila según las columnas informadas")
+    func upMovesOneRow() {
+        var c = gridSession(7, columns: 3, selected: 5)
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent, .selectItem(2)])
+    }
+
+    @Test("En la primera fila ↑ no da la vuelta: no mueve la selección, pero se consume")
+    func upOnFirstRow() {
+        var c = gridSession(7, columns: 3, selected: 1)
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
+    }
+
+    @Test("En la última fila ↓ no da la vuelta: no mueve la selección, pero se consume")
+    func downOnLastRow() {
+        var c = gridSession(7, columns: 3, selected: 6)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
+    }
+
+    @Test("Si ↓ apunta a una columna que no existe en la última fila incompleta, va al último ítem")
+    func downIntoIncompleteRow() {
+        var c = gridSession(7, columns: 3, selected: 5)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(6)])
+        c = gridSession(8, columns: 3, selected: 5)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(7)])
+    }
+
+    @Test("Si ↓ apunta a una columna que existe en la última fila incompleta, va a esa columna")
+    func downIntoExistingColumnOfLastRow() {
+        var c = gridSession(7, columns: 3, selected: 3)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(6)])
+        c = gridSession(8, columns: 3, selected: 4)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(7)])
+    }
+
+    @Test("Con 1 columna, ↑ y ↓ se mueven de a un ítem sin dar la vuelta")
+    func oneColumn() {
+        var c = gridSession(3, columns: 1, selected: 1)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent, .selectItem(1)])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent, .selectItem(0)])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent])
+    }
+
+    @Test("Con 2 columnas y la última fila incompleta, ↓ desde la columna derecha va al último ítem")
+    func twoColumns() {
+        // 0 1
+        // 2 3
+        // 4
+        var c = gridSession(5, columns: 2, selected: 1)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(3)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(4)])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent, .selectItem(2)])
+    }
+
+    @Test("Con todos los ítems en una sola fila, ↑ y ↓ no mueven la selección")
+    func singleRow() {
+        var c = gridSession(4, columns: 6, selected: 1)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent])
+    }
+
+    @Test("Si la vista informa otras columnas (cambió el layout), ↑ y ↓ usan las nuevas")
+    func columnsChange() {
+        var c = gridSession(7, columns: 3, selected: 1)
+        _ = c.send(.switcherColumnsChanged(2))
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(3)])
+    }
+
+    @Test("Si la vista informa 0 columnas o menos, se ignora y ↑ y ↓ usan las anteriores")
+    func invalidColumnsIgnored() {
+        var c = gridSession(7, columns: 3, selected: 1)
+        _ = c.send(.switcherColumnsChanged(0))
+        _ = c.send(.switcherColumnsChanged(-2))
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(4)])
+    }
+
+    @Test("Mientras la vista no informó columnas, ↑ y ↓ no mueven la selección")
+    func noColumnsYet() {
+        var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
+        holdHotkey(&c)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
+    }
+
+    @Test("Las columnas informadas en una Switch Session no pasan a la siguiente")
+    func columnsResetPerSession() {
+        var c = gridSession(3, columns: 1, selected: 1)
+        _ = c.send(.modifiersChanged([]))
+        holdHotkey(&c)
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
+    }
+}
+
+@Suite("Window Switcher: flechas sin el Window Switcher visible")
+struct WindowSwitcherArrowPassThroughTests {
+    @Test("Sin Switch Session, las flechas pasan a la App")
+    func noSession() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [])
+        #expect(c.send(.keyDown(.downArrow, [], isRepeat: false)) == [])
+        #expect(c.send(.keyUp(.downArrow)) == [])
+    }
+
+    @Test("Antes del Activation Delay, las flechas pasan a la App y no mueven la selección")
+    func beforeDelay() {
+        var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(pressHoldingCommand(.rightArrow, &c) == [])
+        #expect(c.send(.keyUp(.rightArrow)) == [])
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(2))])
+    }
+
+    @Test("Si el Window Switcher no se mostró por no tener ítems, las flechas pasan a la App")
+    func noItems() {
+        var c = core([])
+        holdHotkey(&c)
+        #expect(pressHoldingCommand(.rightArrow, &c) == [])
+    }
+}
+
+@Suite("Window Switcher: clic")
+struct WindowSwitcherClickTests {
+    @Test("Clic en una celda activa esa Window y oculta el Window Switcher")
+    func clickActivates() {
+        var c = gridSession(3, columns: 3, selected: 1)
+        #expect(c.send(.windowClicked(WindowID(3))) == [.hideSwitcher, .activate(WindowID(3))])
+    }
+
+    @Test("Después del clic la Switch Session terminó: soltar el modificador no hace nada")
+    func releaseAfterClick() {
+        var c = gridSession(3, columns: 3, selected: 1)
+        _ = c.send(.windowClicked(WindowID(1)))
+        #expect(c.send(.modifiersChanged([])) == [])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [])
+    }
+
+    @Test("El keyUp de ⇥ que llega después del clic se consume")
+    func tabKeyUpAfterClick() {
+        var c = gridSession(3, columns: 3, selected: 1)
+        _ = c.send(.windowClicked(WindowID(1)))
+        #expect(c.send(.keyUp(.tab)) == [.consumeEvent])
+    }
+
+    @Test("Clic con un solo ítem solo oculta el Window Switcher, igual que soltar el modificador")
+    func clickSingleItem() {
+        var c = core([win(1, stack: 0)])
+        holdHotkey(&c)
+        #expect(c.send(.windowClicked(WindowID(1))) == [.hideSwitcher])
+    }
+
+    @Test("Clic en una Window que ya no existe: la activación falla y se pide una foto nueva")
+    func clickClosedWindow() {
+        var c = gridSession(3, columns: 3, selected: 1)
+        #expect(c.send(.windowClicked(WindowID(3))) == [.hideSwitcher, .activate(WindowID(3))])
+        #expect(c.send(.activationFailed(WindowID(3))) == [.refreshSnapshot])
+    }
+
+    @Test("Un clic sin Window Switcher visible no hace nada")
+    func clickWithoutSwitcher() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        #expect(c.send(.windowClicked(WindowID(2))) == [])
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(c.send(.windowClicked(WindowID(2))) == [])
+    }
+}

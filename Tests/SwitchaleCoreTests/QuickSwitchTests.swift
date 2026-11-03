@@ -50,7 +50,7 @@ struct QuickSwitchTests {
 
     @Test("Con el Scope desactivado el evento pasa al sistema")
     func disabled() {
-        var c = core([win(1, stack: 0), win(2, stack: 1)], config: .init(allWindowsEnabled: false))
+        var c = core([win(1, stack: 0), win(2, stack: 1)], config: .init(enabledScopes: [.currentApp]))
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)) == [])
         #expect(c.send(.keyUp(.tab)) == [])
         #expect(c.send(.modifiersChanged([])) == [])

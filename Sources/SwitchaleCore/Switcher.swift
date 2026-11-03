@@ -1,7 +1,9 @@
 // Núcleo del switcher: función (estado, evento) → (estado, [efecto]).
 
 public struct SwitcherConfig: Sendable, Equatable {
-    public var allWindowsEnabled: Bool
+    /// Los Scopes activados. Un Scope desactivado no abre Switch Sessions: su Hotkey hace lo que
+    /// hace en macOS.
+    public var enabledScopes: Set<Scope>
     /// Incluir las Minimized Windows (por defecto sí).
     public var includesMinimizedWindows: Bool
     /// Incluir las Windows de Hidden Apps (por defecto sí).
@@ -10,10 +12,10 @@ public struct SwitcherConfig: Sendable, Equatable {
     public var activationDelayMilliseconds: Int
 
     public init(
-        allWindowsEnabled: Bool = true, includesMinimizedWindows: Bool = true, includesHiddenApps: Bool = true,
-        activationDelayMilliseconds: Int = 80
+        enabledScopes: Set<Scope> = Set(Scope.allCases), includesMinimizedWindows: Bool = true,
+        includesHiddenApps: Bool = true, activationDelayMilliseconds: Int = 80
     ) {
-        self.allWindowsEnabled = allWindowsEnabled
+        self.enabledScopes = enabledScopes
         self.includesMinimizedWindows = includesMinimizedWindows
         self.includesHiddenApps = includesHiddenApps
         self.activationDelayMilliseconds = activationDelayMilliseconds
@@ -27,10 +29,17 @@ public enum SwitcherEvent: Sendable, Equatable {
     case modifiersChanged(Modifiers)
     case activationDelayElapsed
     case windowFocused(WindowID)
+    /// Pasó a ser la App activa (la de adelante), tenga Windows o no.
+    case appActivated(AppID)
     /// El efecto `.activate` no pudo activar la Window (se cerró después de la última foto).
     case activationFailed(WindowID)
     case snapshot(Snapshot)
     case configChanged(SwitcherConfig)
+    /// La vista informa cuántas columnas tiene la grilla del Window Switcher (al mostrarse y cuando
+    /// cambian). Un valor menor que 1 se ignora.
+    case switcherColumnsChanged(Int)
+    /// Clic en la celda de esta Window en el Window Switcher.
+    case windowClicked(WindowID)
 }
 
 public enum SwitcherEffect: Sendable, Equatable {
@@ -90,26 +99,45 @@ public enum WindowMark: Sendable, Equatable {
     }
 }
 
+/// Hacia dónde se mueve la selección del Window Switcher.
+enum Direction {
+    /// El ítem anterior (⇧⇥, ←), con vuelta al final.
+    case previous
+    /// El ítem siguiente (⇥, →), con vuelta al principio.
+    case next
+    /// Una fila arriba (↑), sin vuelta.
+    case up
+    /// Una fila abajo (↓), sin vuelta.
+    case down
+}
+
 public struct SwitcherState: Sendable {
     var config: SwitcherConfig
     var snapshot = Snapshot(windows: [], apps: [], currentScreen: ScreenID(0))
     /// Recency Order: de la más reciente a la menos reciente.
     var recency: [WindowID] = []
+    /// La App activa, que define el Scope Current App.
+    var activeApp: AppID?
     var session: Session?
     /// Teclas consumidas cuyo keyUp hay que consumir (puede llegar después de terminar la sesión).
     var heldKeys: Set<KeyCode> = []
 
     struct Session {
+        let scope: Scope
         var delayElapsed = false
         /// Lo que muestra el Window Switcher, o nil si no está visible.
         private var shown: SwitcherContent?
         /// Windows de la Switch Session, en Recency Order.
         var windows: [WindowID]
         var selected: Int
-        /// La Switch Session arrancó con ⌘⇧⇥.
+        /// La Switch Session arrancó con el Hotkey del Scope con ⇧ (solo si el Scope retrocede con ⇧).
         let startsBackwards: Bool
+        /// Columnas de la grilla del Window Switcher, según la vista; nil hasta que las informe.
+        /// Siempre mayor que 0: se valida al recibir `switcherColumnsChanged`.
+        var columns: Int?
 
-        init(windows: [WindowID], startsBackwards: Bool) {
+        init(scope: Scope, windows: [WindowID], startsBackwards: Bool) {
+            self.scope = scope
             self.windows = windows
             self.startsBackwards = startsBackwards
             selected = Self.initialSelection(windows, backwards: startsBackwards)
@@ -117,8 +145,8 @@ public struct SwitcherState: Sendable {
 
         var isSwitcherVisible: Bool { shown != nil }
 
-        /// Con ⌘⇥, el segundo ítem en Recency Order (un Quick Switch); con ⌘⇧⇥, el último.
-        /// Si hay uno solo, ese.
+        /// Con el Hotkey del Scope, el segundo ítem en Recency Order (un Quick Switch); con el
+        /// Hotkey del Scope con ⇧ (si el Scope retrocede con ⇧), el último. Si hay uno solo, ese.
         private static func initialSelection(_ windows: [WindowID], backwards: Bool) -> Int {
             if backwards { return max(0, windows.count - 1) }
             return windows.count >= 2 ? 1 : 0
@@ -144,10 +172,54 @@ public struct SwitcherState: Sendable {
             (delayElapsed ? [] : [.cancelActivationTimer]) + (isSwitcherVisible ? [.hideSwitcher] : [])
         }
 
-        mutating func move(by offset: Int) {
-            guard !windows.isEmpty else { return }
-            selected = ((selected + offset) % windows.count + windows.count) % windows.count
-            shown?.selected = selected
+        /// Terminar la Switch Session eligiendo esta Window. Con un solo ítem no se activa nada:
+        /// es la Window en la que ya está el usuario.
+        func finishEffects(activating target: WindowID?) -> [SwitcherEffect] {
+            guard windows.count >= 2, let target else { return closingEffects }
+            return closingEffects + [.activate(target)]
+        }
+
+        /// Mueve la selección y devuelve si quedó en un ítem. Anterior y siguiente dan la vuelta en
+        /// los extremos; arriba y abajo no.
+        mutating func move(_ direction: Direction) -> Bool {
+            switch direction {
+            case .previous: return step(by: -1)
+            case .next: return step(by: 1)
+            case .up: return moveUp()
+            case .down: return moveDown()
+            }
+        }
+
+        private mutating func step(by offset: Int) -> Bool {
+            guard !windows.isEmpty else { return false }
+            select(((selected + offset) % windows.count + windows.count) % windows.count)
+            return true
+        }
+
+        /// Sube una fila según las columnas que informó la vista; en la primera fila no se mueve.
+        private mutating func moveUp() -> Bool {
+            guard let columns, selected >= columns else { return false }
+            select(selected - columns)
+            return true
+        }
+
+        /// Baja una fila según las columnas que informó la vista; en la última fila no se mueve.
+        /// Si cae en una columna que no existe en la última fila (incompleta), va al último ítem.
+        private mutating func moveDown() -> Bool {
+            guard let columns, selected / columns < (windows.count - 1) / columns else { return false }
+            select(min(selected + columns, windows.count - 1))
+            return true
+        }
+
+        /// Los efectos de una tecla que mueve la selección: se consume siempre, y el Window Switcher
+        /// visible marca la nueva selección si se movió.
+        func selectionEffects(moved: Bool) -> [SwitcherEffect] {
+            moved && isSwitcherVisible ? [.consumeEvent, .selectItem(selected)] : [.consumeEvent]
+        }
+
+        private mutating func select(_ index: Int) {
+            selected = index
+            shown?.selected = index
         }
 
         /// Muestra, actualiza u oculta el Window Switcher para que refleje la sesión en esta foto:
@@ -193,15 +265,28 @@ public struct SwitcherCore: Sendable {
             return (next, [.consumeEvent] + session.closingEffects)
 
         case .keyDown(let key, let modifiers, let isRepeat):
-            guard isQuickSwitchHotkey(key, modifiers), next.config.allWindowsEnabled else { return (next, []) }
-            next.heldKeys.insert(key)
-            if var session = next.session {
-                session.move(by: modifiers.contains(.shift) ? -1 : 1)
+            if let direction = arrowDirections[key] {
+                // Las flechas solo se consumen con el Window Switcher visible; si no, pasan a la App.
+                guard var session = next.session, session.isSwitcherVisible else { return (next, []) }
+                next.heldKeys.insert(key)
+                let moved = session.move(direction)
                 next.session = session
-                return (next, session.isSwitcherVisible ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
+                return (next, session.selectionEffects(moved: moved))
             }
+            // Dentro de una Switch Session, el Hotkey de su Scope mueve la selección (con ⇧ retrocede, si
+            // el Scope lo admite).
+            if var session = next.session {
+                guard session.scope.hotkey.matches(key, modifiers) else { return (next, []) }
+                next.heldKeys.insert(key)
+                let moved = session.move(modifiers.contains(.shift) ? .previous : .next)
+                next.session = session
+                return (next, session.selectionEffects(moved: moved))
+            }
+            guard let scope = Scope.allCases.first(where: { next.config.enabledScopes.contains($0) && $0.hotkey.matches(key, modifiers) })
+            else { return (next, []) }
+            next.heldKeys.insert(key)
             guard !isRepeat else { return (next, [.consumeEvent]) }
-            next.session = .init(windows: eligibleWindows(next), startsBackwards: modifiers.contains(.shift))
+            next.session = .init(scope: scope, windows: eligibleWindows(next, scope), startsBackwards: modifiers.contains(.shift))
             return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelayMilliseconds)])
 
         case .keyUp(let key):
@@ -209,11 +294,15 @@ public struct SwitcherCore: Sendable {
             return (next, [.consumeEvent])
 
         case .modifiersChanged(let modifiers):
-            guard let session = next.session, !modifiers.contains(.command) else { return (next, []) }
+            guard let session = next.session, !modifiers.contains(session.scope.hotkey.modifier) else { return (next, []) }
             next.session = nil
-            var effects = session.closingEffects
-            if session.windows.count >= 2, let target = session.selectedWindow { effects.append(.activate(target)) }
-            return (next, effects)
+            return (next, session.finishEffects(activating: session.selectedWindow))
+
+        case .windowClicked(let id):
+            // Igual que soltar el modificador con esa Window seleccionada.
+            guard let session = next.session, session.isSwitcherVisible else { return (next, []) }
+            next.session = nil
+            return (next, session.finishEffects(activating: id))
 
         case .activationDelayElapsed:
             guard var session = next.session else { return (next, []) }
@@ -225,6 +314,13 @@ public struct SwitcherCore: Sendable {
         case .windowFocused(let id):
             next.recency.removeAll { $0 == id }
             next.recency.insert(id, at: 0)
+            // La activación de la App llega aparte y puede llegar tarde: la App de la Window
+            // enfocada ya es la App activa.
+            if let window = next.snapshot.windowsByID[id] { next.activeApp = window.appID }
+            return (next, [])
+
+        case .appActivated(let app):
+            next.activeApp = app
             return (next, [])
 
         case .activationFailed:
@@ -241,7 +337,7 @@ public struct SwitcherCore: Sendable {
                 .sorted { $0.stackIndex < $1.stackIndex }
             next.recency += unknown.map(\.id)
             guard var session = next.session else { return (next, []) }
-            session.replaceWindows(with: eligibleWindows(next))
+            session.replaceWindows(with: eligibleWindows(next, session.scope))
             let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
@@ -249,19 +345,27 @@ public struct SwitcherCore: Sendable {
         case .configChanged(let config):
             next.config = config
             return (next, [])
+
+        case .switcherColumnsChanged(let columns):
+            // Una grilla sin columnas no existe: se ignora y quedan las anteriores.
+            guard columns > 0 else { return (next, []) }
+            next.session?.columns = columns
+            return (next, [])
         }
     }
 
-    /// ⌘⇥ y ⌘⇧⇥: abren la Switch Session; dentro de ella, avanzan o retroceden la selección.
-    private static func isQuickSwitchHotkey(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
-        key == .tab && modifiers.contains(.command) && modifiers.subtracting([.command, .shift]).isEmpty
-    }
+    /// ← y → se mueven como ⇧⇥ y ⇥; ↑ y ↓, una fila de la grilla.
+    private static let arrowDirections: [KeyCode: Direction] = [
+        .leftArrow: .previous, .rightArrow: .next, .upArrow: .up, .downArrow: .down,
+    ]
 
+    /// Las Windows del Scope en Recency Order. Current App: solo las de la App activa.
     /// Reglas de inclusión: Space y pantalla actuales fijos; Minimized y Hidden Apps según la configuración.
-    private static func eligibleWindows(_ state: SwitcherState) -> [WindowID] {
+    private static func eligibleWindows(_ state: SwitcherState, _ scope: Scope) -> [WindowID] {
         let windowsByID = state.snapshot.windowsByID
         return state.recency.compactMap { id in
             guard let window = windowsByID[id],
+                  scope == .allWindows || window.appID == state.activeApp,
                   window.isInCurrentSpace,
                   window.screen == state.snapshot.currentScreen,
                   state.config.includesMinimizedWindows || !window.isMinimized,

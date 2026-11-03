@@ -2,15 +2,26 @@ import AppKit
 import SwitchaleCore
 
 /// El Window Switcher en pantalla: un `NSPanel` no activante con fondo translúcido y una grilla
-/// centrada que pasa a la siguiente fila cuando no entra. Solo dibuja lo que pide el núcleo;
-/// el teclado lo recibe el event tap, así que el `NSPanel` nunca toma foco.
+/// centrada en la pantalla que pasa a la siguiente fila cuando no entra. Solo dibuja lo que pide
+/// el núcleo; el teclado lo recibe el event tap, así que el `NSPanel` nunca toma foco. Le informa
+/// al núcleo los clics en las celdas y cuántas columnas tiene la grilla.
 @MainActor
 final class WindowSwitcherView {
     private let panel: NSPanel
     private let background = NSVisualEffectView()
     private var cells: [SwitcherCell] = []
+    /// Lo que se está mostrando, con la selección al día: si cambian las pantallas la grilla se
+    /// rehace acá mismo, sin un efecto del núcleo que traiga el contenido.
+    private var content: SwitcherContent?
+    /// Columnas ya informadas al núcleo en esta Switch Session. Se olvidan en cada `show`, porque
+    /// el núcleo arranca cada Switch Session sin columnas.
+    private var reportedColumns: Int?
+    private let onClick: (WindowID) -> Void
+    private let onColumnsChanged: (Int) -> Void
 
-    init() {
+    init(onClick: @escaping (WindowID) -> Void, onColumnsChanged: @escaping (Int) -> Void) {
+        self.onClick = onClick
+        self.onColumnsChanged = onColumnsChanged
         panel = NSPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -35,9 +46,21 @@ final class WindowSwitcherView {
         background.layer?.cornerRadius = Metrics.cornerRadius
         background.layer?.masksToBounds = true
         panel.contentView = background
+
+        // Si cambia la resolución o la disposición de las pantallas con el Window Switcher abierto,
+        // la grilla se rehace y puede cambiar de columnas.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible, let content = self.content else { return }
+                self.layout(content)
+            }
+        }
     }
 
     func show(_ content: SwitcherContent) {
+        reportedColumns = nil
         layout(content)
         panel.orderFrontRegardless()
     }
@@ -47,16 +70,20 @@ final class WindowSwitcherView {
     }
 
     func select(_ index: Int) {
+        content?.selected = index
         for (offset, cell) in cells.enumerated() { cell.isSelected = offset == index }
     }
 
     func hide() {
+        content = nil
         panel.orderOut(nil)
     }
 
     // MARK: - Grilla
 
+    /// Arma la grilla y le informa al núcleo las columnas que quedaron, si cambiaron.
     private func layout(_ content: SwitcherContent) {
+        self.content = content
         let items = content.items
         let screen = NSScreen.main ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -75,21 +102,29 @@ final class WindowSwitcherView {
         cells = items.enumerated().map { index, item in
             let row = index / columns
             let column = index % columns
-            // Cada fila se centra: la última, si está incompleta, queda en el medio.
-            let inRow = min(columns, items.count - row * columns)
-            let rowWidth = CGFloat(inRow) * cell.width + CGFloat(inRow - 1) * Metrics.spacing
-            let x = (size.width - rowWidth) / 2 + CGFloat(column) * (cell.width + Metrics.spacing)
+            // Todas las filas arrancan a la izquierda del bloque, también la última si está
+            // incompleta: así la columna i queda en la misma X en cada fila y ↑/↓ del núcleo, que
+            // navegan por índice (± columnas), coinciden con lo que se ve.
+            let x = Metrics.padding + CGFloat(column) * (cell.width + Metrics.spacing)
             let y = size.height - Metrics.padding - CGFloat(row + 1) * cell.height - CGFloat(row) * Metrics.spacing
 
             let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
             view.configure(title: item.title, icon: Self.icon(for: item.appID), mark: item.mark)
             view.isSelected = index == content.selected
+            view.onClick = { [weak self] in self?.onClick(item.windowID) }
             background.addSubview(view)
             return view
         }
 
         let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        reportColumnsIfChanged(columns)
+    }
+
+    private func reportColumnsIfChanged(_ columns: Int) {
+        guard columns != reportedColumns else { return }
+        reportedColumns = columns
+        onColumnsChanged(columns)
     }
 
     private static func icon(for app: AppID) -> NSImage? {
@@ -129,6 +164,8 @@ private final class SwitcherCell: NSView {
     var isSelected = false {
         didSet { needsDisplay = true }
     }
+
+    var onClick: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -191,6 +228,24 @@ private final class SwitcherCell: NSView {
         case .minimized: ("minus.circle.fill", "minimizada", Metrics.markedIconAlpha)
         case .appHidden: ("eye.slash.fill", "App oculta", Metrics.markedIconAlpha)
         }
+    }
+
+    // El `NSPanel` nunca es key: sin esto el primer clic solo "activaría" la ventana.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// Los clics sobre el ícono o el título los recibe la celda.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        frame.contains(point) ? self : nil
+    }
+
+    // Vacío a propósito: la celda se queda con el mouseDown (por defecto `NSView` lo pasa al
+    // responder siguiente) y el clic se resuelve en `mouseUp`.
+    override func mouseDown(with event: NSEvent) {}
+
+    /// El clic cuenta al soltar el botón dentro de la celda, como un botón.
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onClick?()
     }
 
     override var wantsUpdateLayer: Bool { true }

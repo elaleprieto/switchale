@@ -27,6 +27,13 @@ func core(_ windows: [Window], config: SwitcherConfig = .init()) -> SwitcherCore
     return core
 }
 
+/// Núcleo con esta foto y esta App activa.
+func core(_ windows: [Window], config: SwitcherConfig = .init(), activeApp: Int) -> SwitcherCore {
+    var core = core(windows, config: config)
+    _ = core.send(.appActivated(AppID(activeApp)))
+    return core
+}
+
 /// Quick Switch completo: apretar ⌘⇥ y soltar ⌘ de inmediato; devuelve el efecto de activación.
 func quickSwitchTarget(_ core: inout SwitcherCore) -> WindowID? {
     _ = core.send(.keyDown(.tab, [.command], isRepeat: false))
