@@ -213,6 +213,9 @@ public struct SwitcherCore: Sendable {
         case .windowFocused(let id):
             next.recency.removeAll { $0 == id }
             next.recency.insert(id, at: 0)
+            // La activación de la App llega aparte y puede llegar tarde: la App de la Window
+            // enfocada ya es la App activa.
+            if let window = next.snapshot.windowsByID[id] { next.activeApp = window.appID }
             return (next, [])
 
         case .appActivated(let app):

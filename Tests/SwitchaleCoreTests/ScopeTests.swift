@@ -39,6 +39,22 @@ struct CurrentAppScopeTests {
         #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(2, app: 2), item(4, app: 2)], selected: 1))])
     }
 
+    @Test("El foco de una Window fija la App activa en la App de esa Window, aunque no haya llegado la activación de la App")
+    func windowFocusSetsActiveApp() {
+        var c = core([win(1, app: 1, stack: 0), win(2, app: 2, stack: 1), win(3, app: 2, stack: 2)], activeApp: 1)
+        _ = c.send(.windowFocused(WindowID(3)))
+        _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(3, app: 2), item(2, app: 2)], selected: 1))])
+    }
+
+    @Test("El foco de una Window que no está en la foto no cambia la App activa")
+    func unknownWindowFocusKeepsActiveApp() {
+        var c = core([win(1, app: 1, stack: 0), win(2, app: 2, stack: 1), win(3, app: 1, stack: 2)], activeApp: 1)
+        _ = c.send(.windowFocused(WindowID(9)))
+        _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(3)], selected: 1))])
+    }
+
     @Test("Si la App activa no tiene Windows, no aparece en el Scope: no hay Window Switcher ni activación")
     func windowlessActiveApp() {
         var c = core([win(1, app: 1, stack: 0), win(2, app: 1, stack: 1)], activeApp: 9)
