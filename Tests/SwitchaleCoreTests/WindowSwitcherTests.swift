@@ -1,10 +1,12 @@
 import Testing
-import SwitchaleCore
+@testable import SwitchaleCore
 
 /// Abre una Switch Session (⌘⇥) y deja vencer el Activation Delay; devuelve los efectos del vencimiento.
 @discardableResult
 func holdHotkey(_ core: inout SwitcherCore) -> [SwitcherEffect] {
     _ = core.send(.keyDown(.tab, [.command], isRepeat: false))
+    // La foto que pide la Switch Session al arrancar (la pantalla del panel se decide con ella).
+    deliverFreshSnapshot(&core)
     return core.send(.activationDelayElapsed)
 }
 
@@ -24,6 +26,7 @@ struct WindowSwitcherVisibilityTests {
     func shiftTabStartsAtLast() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         _ = c.send(.keyDown(.tab, [.command, .shift], isRepeat: false))
+        deliverFreshSnapshot(&c)
         #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 2, screen: mainScreen))])
         #expect(c.send(.keyDown(.tab, [.command, .shift], isRepeat: false)) == [.consumeEvent, .selectItem(1)])
     }

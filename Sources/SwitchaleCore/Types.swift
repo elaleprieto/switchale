@@ -74,26 +74,40 @@ public struct Window: Sendable, Equatable {
     }
 }
 
+/// Las pantallas que importan en una foto, además de la de la Window con foco.
+public struct Screens: Sendable, Equatable {
+    /// La pantalla donde está el mouse.
+    public var mouse: ScreenID
+    /// La pantalla principal del sistema.
+    public var primary: ScreenID
+
+    public init(mouse: ScreenID, primary: ScreenID) {
+        self.mouse = mouse
+        self.primary = primary
+    }
+}
+
 public struct Snapshot: Sendable, Equatable {
     public var windows: [Window]
     public var apps: [AppInfo]
-    /// La pantalla donde está el usuario ahora.
-    public var currentScreen: ScreenID
-    /// La pantalla donde está el mouse.
-    public var mouseScreen: ScreenID
-    /// La pantalla principal del sistema.
-    public var primaryScreen: ScreenID
+    /// La Window con foco según AX en el momento de la foto, si hay una.
+    public var focusedWindow: WindowID?
+    public var screens: Screens
 
-    public init(
-        windows: [Window], apps: [AppInfo], currentScreen: ScreenID,
-        mouseScreen: ScreenID? = nil, primaryScreen: ScreenID? = nil
-    ) {
+    public init(windows: [Window], apps: [AppInfo], focusedWindow: WindowID?, screens: Screens) {
         self.windows = windows
         self.apps = apps
-        self.currentScreen = currentScreen
-        self.mouseScreen = mouseScreen ?? currentScreen
-        self.primaryScreen = primaryScreen ?? currentScreen
+        self.focusedWindow = focusedWindow
+        self.screens = screens
     }
+
+    /// La pantalla de la Window con foco; nil si no hay una o no está en la foto.
+    var focusedScreen: ScreenID? {
+        focusedWindow.flatMap { windowsByID[$0] }?.screen
+    }
+
+    /// La pantalla actual: la de la Window con foco o, si no la hay, la del mouse.
+    var currentScreen: ScreenID { focusedScreen ?? screens.mouse }
 
     var windowsByID: [WindowID: Window] {
         Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })

@@ -1,7 +1,7 @@
 // Núcleo del switcher: función (estado, evento) → (estado, [efecto]).
 
 /// En qué pantalla aparece el Window Switcher.
-public enum PanelScreen: Sendable, Equatable, CaseIterable {
+public enum PanelScreen: String, Sendable, Equatable {
     /// La pantalla de la Window con foco (por defecto).
     case focusedWindow
     /// La pantalla donde está el mouse.
@@ -88,7 +88,9 @@ public struct SwitcherItem: Sendable, Equatable {
 
 public struct SwitcherState: Sendable {
     var config: SwitcherConfig
-    var snapshot = Snapshot(windows: [], apps: [], currentScreen: ScreenID(0))
+    var snapshot = Snapshot(
+        windows: [], apps: [], focusedWindow: nil, screens: Screens(mouse: ScreenID(0), primary: ScreenID(0))
+    )
     /// Recency Order: de la más reciente a la menos reciente.
     var recency: [WindowID] = []
     var session: Session?
@@ -97,6 +99,9 @@ public struct SwitcherState: Sendable {
 
     struct Session {
         var delayElapsed = false
+        /// Pantalla donde aparece el Window Switcher. Se decide con la primera foto de la sesión
+        /// (la que pide al arrancar, no la vieja) y no cambia hasta que termina.
+        var panelScreen: ScreenID?
         /// Lo que muestra el Window Switcher, o nil si no está visible.
         private var shown: SwitcherContent?
         /// Windows de la Switch Session, en Recency Order.
@@ -147,10 +152,11 @@ public struct SwitcherState: Sendable {
         }
 
         /// Muestra, actualiza u oculta el Window Switcher para que refleje la sesión en esta foto:
-        /// está visible si venció el Activation Delay y hay ítems.
-        mutating func syncSwitcher(with snapshot: Snapshot, on screen: ScreenID) -> [SwitcherEffect] {
-            let content = SwitcherContent(snapshot.items(for: windows), selected: selected, screen: screen)
-            let target = delayElapsed && !content.items.isEmpty ? content : nil
+        /// está visible si venció el Activation Delay, ya se decidió la pantalla del panel y hay ítems.
+        mutating func syncSwitcher(with snapshot: Snapshot) -> [SwitcherEffect] {
+            let items = snapshot.items(for: windows)
+            let target = delayElapsed && !items.isEmpty
+                ? panelScreen.map { SwitcherContent(items, selected: selected, screen: $0) } : nil
             defer { shown = target }
             switch (shown, target) {
             case (nil, let new?): return [.showSwitcher(new)]
@@ -214,7 +220,7 @@ public struct SwitcherCore: Sendable {
         case .activationDelayElapsed:
             guard var session = next.session else { return (next, []) }
             session.delayElapsed = true
-            let effects = session.syncSwitcher(with: next.snapshot, on: panelScreen(next))
+            let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
 
@@ -238,7 +244,8 @@ public struct SwitcherCore: Sendable {
             next.recency += unknown.map(\.id)
             guard var session = next.session else { return (next, []) }
             session.replaceWindows(with: eligibleWindows(next))
-            let effects = session.syncSwitcher(with: next.snapshot, on: panelScreen(next))
+            session.panelScreen = session.panelScreen ?? panelScreen(of: snapshot, config: next.config)
+            let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
 
@@ -253,16 +260,13 @@ public struct SwitcherCore: Sendable {
         key == .tab && modifiers.contains(.command) && modifiers.subtracting([.command, .shift]).isEmpty
     }
 
-    /// Pantalla donde aparece el Window Switcher según la configuración. Con `.focusedWindow`, la de la
-    /// Window con foco (la más reciente); si no se conoce, la pantalla actual.
-    private static func panelScreen(_ state: SwitcherState) -> ScreenID {
-        let snapshot = state.snapshot
-        switch state.config.panelScreen {
-        case .mouse: return snapshot.mouseScreen
-        case .primary: return snapshot.primaryScreen
-        case .focusedWindow:
-            let focused = state.recency.first.flatMap { snapshot.windowsByID[$0] }
-            return focused?.screen ?? snapshot.currentScreen
+    /// Pantalla donde aparece el Window Switcher según la configuración. Con `.focusedWindow`, la
+    /// pantalla actual de la foto: la de la Window con foco o, si no hay, la del mouse.
+    private static func panelScreen(of snapshot: Snapshot, config: SwitcherConfig) -> ScreenID {
+        switch config.panelScreen {
+        case .mouse: snapshot.screens.mouse
+        case .primary: snapshot.screens.primary
+        case .focusedWindow: snapshot.currentScreen
         }
     }
 

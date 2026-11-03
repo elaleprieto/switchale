@@ -1,5 +1,5 @@
 import Testing
-import SwitchaleCore
+@testable import SwitchaleCore
 
 @Suite("Quick Switch")
 struct QuickSwitchTests {
@@ -30,6 +30,7 @@ struct QuickSwitchTests {
     func afterDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        deliverFreshSnapshot(&c)
         _ = c.send(.activationDelayElapsed)
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
     }
