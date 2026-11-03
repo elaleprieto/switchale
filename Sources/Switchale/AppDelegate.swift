@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isFirstLaunch = false
     private var statusBar: StatusBarController?
     private var permissionsWindow: PermissionsWindowController?
+    private var preferencesWindow: PreferencesWindowController?
     private var monitor: PermissionsMonitor?
     private let orchestrator = Orchestrator()
 
@@ -15,7 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isFirstLaunch = history.recordLaunch()
         orchestrator.start()
 
-        statusBar = StatusBarController { [weak self] in self?.showPermissionsWindow() }
+        statusBar = StatusBarController(
+            onShowPreferences: { [weak self] in self?.showPreferencesWindow() },
+            onShowPermissions: { [weak self] in self?.showPermissionsWindow() }
+        )
         monitor = PermissionsMonitor { [weak self] _ in self?.render() }
 
         if render().showsWindowAtLaunch {
@@ -35,6 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar?.update(guide)
         permissionsWindow?.update(guide)
         return guide
+    }
+
+    private func showPreferencesWindow() {
+        let window = preferencesWindow ?? PreferencesWindowController()
+        preferencesWindow = window
+        window.present()
     }
 
     private func showPermissionsWindow() {

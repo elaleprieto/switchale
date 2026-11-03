@@ -10,11 +10,6 @@ final class WindowSwitcherView {
     private let panel: NSPanel
     private let background = NSVisualEffectView()
     private var cells: [SwitcherCell] = []
-    /// Tamaño de las Thumbnails, de la configuración.
-    var thumbnailSize = ThumbnailSize() {
-        didSet { cellSize = Metrics.cellSize(for: thumbnailSize) }
-    }
-    private var cellSize = Metrics.cellSize(for: ThumbnailSize())
     /// La Thumbnail ya capturada de una Window, si hay. Se consulta al armar la grilla, así un
     /// cambio de contenido no deja las celdas sin imagen.
     var thumbnailProvider: (WindowID) -> CGImage? = { _ in nil }
@@ -109,7 +104,8 @@ final class WindowSwitcherView {
         let screen = NSScreen.screens.first { $0.screenID == content.screen } ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-        let cell = cellSize
+        // El tamaño de las Thumbnails lo fija el núcleo para toda la Switch Session.
+        let cell = Metrics.cellSize(for: content.thumbnailSize)
         let available = visible.width * Metrics.maxWidthFraction - 2 * Metrics.padding
         let fitting = Int((available + Metrics.spacing) / (cell.width + Metrics.spacing))
         let columns = max(1, min(items.count, fitting))

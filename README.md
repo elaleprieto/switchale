@@ -39,10 +39,14 @@ build/DerivedData/Build/Products/Debug/switchale.app/Contents/MacOS/switchale -l
 
 ## Configuración del Window Switcher
 
-Todavía no hay control en Preferencias (#12): se cambia con `defaults write` y se aplica sin reiniciar la app (en la siguiente Switch Session).
+Se cambia en "Preferencias…" (barra de menú), con las pestañas General (Hotkey y activación de cada Scope, Activation Delay, pantalla del panel, inclusiones e inicio al loguearse) y Appearance (tamaño de Thumbnail), y el botón "Restaurar valores por defecto". Todo se guarda en `UserDefaults` y se aplica sin reiniciar la app, desde la siguiente Switch Session. También se puede cambiar con `defaults write`:
 
-- `includesOtherScreens` (Bool, por defecto `YES`): si es `NO`, solo entran las Windows de la pantalla actual, que es la de la Window con foco (o la del mouse si no hay una).
+- `allWindowsEnabled`, `currentAppEnabled` (Bool, por defecto `YES`): si es `NO`, el Hotkey del Scope hace lo que hace en macOS.
+- `allWindowsHotkeyModifier`, `currentAppHotkeyModifier` (`command`, `option`, `control` o `shift`) y `allWindowsHotkeyKey`, `currentAppHotkeyKey` (`tab` o `grave`): por defecto ⌘⇥ y ⌥`. Con ⇥, el Hotkey con ⇧ retrocede.
+- `activationDelayMilliseconds` (Int, 0 a 500, por defecto `80`).
+- `includesMinimizedWindows`, `includesHiddenApps`, `includesOtherScreens` (Bool, por defecto `YES`): sin otras pantallas, solo entran las Windows de la pantalla actual, que es la de la Window con foco (o la del mouse si no hay una).
 - `panelScreen` (`focusedWindow` por defecto, `mouse` o `primary`): en qué pantalla aparece el Window Switcher. Se decide al empezar la Switch Session y no cambia mientras dura.
+- `thumbnailWidth` (Int, 96 a 224, por defecto `160`): ancho de las Thumbnails; el alto sigue la proporción 16:10.
 
 ```sh
 defaults write <bundle id> includesOtherScreens -bool NO
