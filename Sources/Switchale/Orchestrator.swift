@@ -53,12 +53,10 @@ final class Orchestrator {
                 activationTimer?.invalidate()
                 activationTimer = nil
             case .activate(let id):
-                // Si la Window ya no existe (se cerró después de la última foto), no se hace nada
-                // más que pedir una foto nueva.
                 if let handle = source.handles[id], activator.activate(handle) {
                     dispatch(.windowFocused(id))
                 } else {
-                    scheduleSnapshotRefresh()
+                    dispatch(.activationFailed(id))
                 }
             case .refreshSnapshot:
                 scheduleSnapshotRefresh()

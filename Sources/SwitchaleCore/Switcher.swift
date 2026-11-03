@@ -18,6 +18,8 @@ public enum SwitcherEvent: Sendable, Equatable {
     case modifiersChanged(Modifiers)
     case activationDelayElapsed
     case windowFocused(WindowID)
+    /// El efecto `.activate` no pudo activar la Window (se cerró después de la última foto).
+    case activationFailed(WindowID)
     case snapshot(Snapshot)
     case configChanged(SwitcherConfig)
 }
@@ -120,8 +122,12 @@ public struct SwitcherCore: Sendable {
     public static func reduce(_ state: SwitcherState, _ event: SwitcherEvent) -> (SwitcherState, [SwitcherEffect]) {
         var next = state
         switch event {
-        case .keyDown(.escape, _, _):
-            guard let session = next.session else { return (next, []) }
+        case .keyDown(.escape, _, let isRepeat):
+            guard let session = next.session else {
+                // Autorepeat del Esc que canceló la Switch Session: no tiene que llegarle a la App de adelante.
+                let isCancellingEscapeHeld = isRepeat && next.heldKeys.contains(.escape)
+                return (next, isCancellingEscapeHeld ? [.consumeEvent] : [])
+            }
             next.session = nil
             next.heldKeys.insert(.escape)
             return (next, [.consumeEvent] + session.closingEffects)
@@ -161,6 +167,10 @@ public struct SwitcherCore: Sendable {
             next.recency.removeAll { $0 == id }
             next.recency.insert(id, at: 0)
             return (next, [])
+
+        case .activationFailed:
+            // No se registra foco en esa Window; la foto nueva la saca de Recency Order si ya no existe.
+            return (next, [.refreshSnapshot])
 
         case .snapshot(let snapshot):
             next.snapshot = snapshot

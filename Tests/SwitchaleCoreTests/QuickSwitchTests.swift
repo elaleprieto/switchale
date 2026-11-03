@@ -100,6 +100,14 @@ struct QuickSwitchTests {
         #expect(c.send(.modifiersChanged([])) == [])
     }
 
+    @Test("Si la Window ya no existe al activarla, no se registra foco en ella y se pide una foto nueva")
+    func activationFailed() {
+        var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
+        #expect(quickSwitchTarget(&c) == WindowID(2))
+        #expect(c.send(.activationFailed(WindowID(2))) == [.refreshSnapshot])
+        #expect(quickSwitchTarget(&c) == WindowID(2))
+    }
+
     @Test("Mientras ⌘ sigue apretado la sesión sigue abierta")
     func modifierStillHeld() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])

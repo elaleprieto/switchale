@@ -202,6 +202,17 @@ struct WindowSwitcherEscapeTests {
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)).contains(.startActivationTimer(milliseconds: 80)))
     }
 
+    @Test("Mantener Esc apretado después de cancelar no le llega a la App de adelante")
+    func escapeAutorepeatConsumed() {
+        var c = core([win(1, stack: 0), win(2, stack: 1)])
+        holdHotkey(&c)
+        _ = c.send(.keyDown(.escape, [.command], isRepeat: false))
+        #expect(c.send(.keyDown(.escape, [.command], isRepeat: true)) == [.consumeEvent])
+        #expect(c.send(.keyDown(.escape, [.command], isRepeat: true)) == [.consumeEvent])
+        #expect(c.send(.keyUp(.escape)) == [.consumeEvent])
+        #expect(c.send(.modifiersChanged([])) == [])
+    }
+
     @Test("Sin Switch Session, Esc pasa al sistema")
     func escapeWithoutSession() {
         var c = core([win(1, stack: 0)])
