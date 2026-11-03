@@ -61,6 +61,11 @@ final class WindowSwitcherView {
         cells[index].thumbnail = thumbnailProvider(window)
     }
 
+    /// Se descartaron las Thumbnails (p. ej. se perdió el permiso): las celdas vuelven a ícono y título.
+    func thumbnailsDiscarded() {
+        for cell in cells { cell.thumbnail = nil }
+    }
+
     func select(_ index: Int) {
         for (offset, cell) in cells.enumerated() { cell.isSelected = offset == index }
     }
@@ -127,6 +132,8 @@ private enum Metrics {
     static let iconSize: CGFloat = 72
     /// Ícono chico: encima de la Thumbnail, en su esquina inferior izquierda.
     static let badgeIconSize: CGFloat = 32
+    /// Separación del ícono chico respecto de la esquina de la Thumbnail.
+    static let badgeIconMargin: CGFloat = 4
     static let thumbnailCornerRadius: CGFloat = 6
     static let spacing: CGFloat = 8
     static let padding: CGFloat = 20
@@ -219,7 +226,7 @@ private final class SwitcherCell: NSView {
             )
         } else {
             let size = Metrics.badgeIconSize
-            iconView.frame = NSRect(x: thumbnailArea.minX + 4, y: thumbnailArea.minY + 4, width: size, height: size)
+            iconView.frame = NSRect(x: thumbnailArea.minX + Metrics.badgeIconMargin, y: thumbnailArea.minY + Metrics.badgeIconMargin, width: size, height: size)
         }
     }
 

@@ -11,13 +11,42 @@ struct ThumbnailImage: @unchecked Sendable {
 /// ni el event tap. Qué capturar y cuándo lo decide el núcleo (`ThumbnailCache`).
 enum ThumbnailSource {
     /// `SCWindow` es inmutable pero no está marcado `Sendable`.
-    private struct Target: @unchecked Sendable {
+    fileprivate struct Target: @unchecked Sendable {
         let window: SCWindow?
     }
 
-    /// Captura las Thumbnails de `windows`, de a una, y llama a `deliver` por cada una (en el main
-    /// actor) con la imagen o nil si la Window no se pudo capturar (cerrada, en otro Space,
-    /// Minimized o sin permiso).
+    /// Cuánto se reutiliza el `SCShareableContent` entre lotes, en segundos.
+    private static let contentTTL: TimeInterval = 1
+    /// Capturas simultáneas como máximo.
+    private static let maxConcurrentCaptures = 4
+
+    private struct CachedContent: @unchecked Sendable {
+        let windows: [WindowID: Target]
+        let fetchedAt: Date
+    }
+
+    private actor ContentCache {
+        private var cached: CachedContent?
+
+        func windows() async -> [WindowID: Target] {
+            if let cached, Date().timeIntervalSince(cached.fetchedAt) < ThumbnailSource.contentTTL {
+                return cached.windows
+            }
+            let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            let windows = Dictionary(
+                (content?.windows ?? []).map { (WindowID(Int($0.windowID)), Target(window: $0)) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            cached = CachedContent(windows: windows, fetchedAt: Date())
+            return windows
+        }
+    }
+
+    private static let contentCache = ContentCache()
+
+    /// Captura las Thumbnails de `windows`, con a lo sumo `maxConcurrentCaptures` a la vez, y llama
+    /// a `deliver` por cada una (en el main actor) con la imagen o nil si la Window no se pudo
+    /// capturar (cerrada, en otro Space, Minimized o sin permiso).
     static func capture(
         _ windows: [WindowID],
         size: ThumbnailSize,
@@ -26,18 +55,18 @@ enum ThumbnailSource {
     ) {
         guard !windows.isEmpty else { return }
         Task.detached(priority: .userInitiated) {
-            let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            let byID = Dictionary(
-                (content?.windows ?? []).map { (WindowID(Int($0.windowID)), $0) },
-                uniquingKeysWith: { first, _ in first }
-            )
+            let byID = await contentCache.windows()
             await withTaskGroup(of: (WindowID, ThumbnailImage?).self) { group in
-                for id in windows {
-                    let target = Target(window: byID[id])
+                var pending = windows.makeIterator()
+                func addNext(to group: inout TaskGroup<(WindowID, ThumbnailImage?)>) {
+                    guard let id = pending.next() else { return }
+                    let target = byID[id] ?? Target(window: nil)
                     group.addTask { (id, await image(of: target.window, size: size, scale: scale)) }
                 }
+                for _ in 0..<maxConcurrentCaptures { addNext(to: &group) }
                 for await (id, image) in group {
                     await deliver(id, image)
+                    addNext(to: &group)
                 }
             }
         }

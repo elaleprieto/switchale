@@ -7,7 +7,13 @@ final class Orchestrator {
     /// Cada cuánto se refresca la foto mientras el Window Switcher está visible.
     private static let switcherRefreshInterval: TimeInterval = 0.5
 
-    private let config = SwitcherConfig()
+    /// La configuración vigente; al cambiarla se avisa al núcleo y se actualiza la vista.
+    private var config = SwitcherConfig() {
+        didSet {
+            switcherView.thumbnailSize = config.thumbnailSize
+            dispatch(.configChanged(config))
+        }
+    }
     private lazy var core = SwitcherCore(config: config)
     /// Thumbnails por Window; el núcleo decide qué capturar y cuándo, ScreenCaptureKit captura.
     private var thumbnails = ThumbnailCache<ThumbnailImage>()
@@ -71,13 +77,11 @@ final class Orchestrator {
                 consume = true
             case .showSwitcher(let content):
                 switcherView.show(content)
-                visibleWindows = content.items.map(\.windowID)
-                requestThumbnails()
+                switcherContentChanged(content)
                 startSwitcherRefresh()
             case .updateSwitcher(let content):
                 switcherView.update(content)
-                visibleWindows = content.items.map(\.windowID)
-                requestThumbnails()
+                switcherContentChanged(content)
             case .selectItem(let index):
                 switcherView.select(index)
             case .hideSwitcher:
@@ -88,6 +92,11 @@ final class Orchestrator {
             }
         }
         return consume
+    }
+
+    private func switcherContentChanged(_ content: SwitcherContent) {
+        visibleWindows = content.items.map(\.windowID)
+        requestThumbnails()
     }
 
     private func startSwitcherRefresh() {
@@ -105,21 +114,22 @@ final class Orchestrator {
     private func requestThumbnails() {
         thumbnails.prune(keeping: Set(source.handles.keys))
         let now = ProcessInfo.processInfo.systemUptime
-        let screenRecording = SystemPermissions.current().screenRecording
-        if !screenRecording { thumbnails.removeAll() }
+        if thumbnails.updatePermission(screenRecording: SystemPermissions.current().screenRecording) {
+            switcherView.thumbnailsDiscarded()
+        }
         let size = config.thumbnailSize
-        let toCapture = thumbnails.windowsToCapture(
-            among: visibleWindows, size: size, now: now, screenRecording: screenRecording
-        )
+        let toCapture = thumbnails.windowsToCapture(among: visibleWindows, size: size, now: now)
         toCapture.forEach { thumbnails.markCapturing($0) }
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         ThumbnailSource.capture(toCapture, size: size, scale: scale) { [weak self] id, image in
             guard let self else { return }
+            let now = ProcessInfo.processInfo.systemUptime
             if let image {
-                thumbnails.store(image, for: id, size: size, at: ProcessInfo.processInfo.systemUptime)
-                switcherView.thumbnailChanged(for: id)
+                if thumbnails.store(image, for: id, size: size, at: now) {
+                    switcherView.thumbnailChanged(for: id)
+                }
             } else {
-                thumbnails.captureFailed(id)
+                thumbnails.captureFailed(id, at: now)
             }
         }
     }
