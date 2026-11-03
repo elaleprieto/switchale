@@ -2,16 +2,20 @@ import AppKit
 import SwitchaleCore
 
 /// El Window Switcher en pantalla: un `NSPanel` no activante con fondo translúcido y una grilla
-/// centrada que pasa a la siguiente fila cuando no entra. Solo dibuja lo que pide el núcleo;
-/// el teclado lo recibe el event tap, así que el `NSPanel` nunca toma foco. Le informa al núcleo
-/// los clics en las celdas y cuántas columnas tiene la grilla.
+/// centrada en la pantalla que pasa a la siguiente fila cuando no entra. Solo dibuja lo que pide
+/// el núcleo; el teclado lo recibe el event tap, así que el `NSPanel` nunca toma foco. Le informa
+/// al núcleo los clics en las celdas y cuántas columnas tiene la grilla.
 @MainActor
 final class WindowSwitcherView {
     private let panel: NSPanel
     private let background = NSVisualEffectView()
     private var cells: [SwitcherCell] = []
-    /// Lo que se está mostrando, para rehacer la grilla si cambian las pantallas.
+    /// Lo que se está mostrando, con la selección al día: si cambian las pantallas la grilla se
+    /// rehace acá mismo, sin un efecto del núcleo que traiga el contenido.
     private var content: SwitcherContent?
+    /// Columnas ya informadas al núcleo en esta Switch Session. Se olvidan en cada `show`, porque
+    /// el núcleo arranca cada Switch Session sin columnas.
+    private var reportedColumns: Int?
     private let onClick: (WindowID) -> Void
     private let onColumnsChanged: (Int) -> Void
 
@@ -56,6 +60,7 @@ final class WindowSwitcherView {
     }
 
     func show(_ content: SwitcherContent) {
+        reportedColumns = nil
         layout(content)
         panel.orderFrontRegardless()
     }
@@ -76,7 +81,7 @@ final class WindowSwitcherView {
 
     // MARK: - Grilla
 
-    /// Arma la grilla y le informa al núcleo las columnas que quedaron.
+    /// Arma la grilla y le informa al núcleo las columnas que quedaron, si cambiaron.
     private func layout(_ content: SwitcherContent) {
         self.content = content
         let items = content.items
@@ -97,10 +102,10 @@ final class WindowSwitcherView {
         cells = items.enumerated().map { index, item in
             let row = index / columns
             let column = index % columns
-            // Cada fila se centra: la última, si está incompleta, queda en el medio.
-            let inRow = min(columns, items.count - row * columns)
-            let rowWidth = CGFloat(inRow) * cell.width + CGFloat(inRow - 1) * Metrics.spacing
-            let x = (size.width - rowWidth) / 2 + CGFloat(column) * (cell.width + Metrics.spacing)
+            // Todas las filas arrancan a la izquierda del bloque, también la última si está
+            // incompleta: así la columna i queda en la misma X en cada fila y ↑/↓ del núcleo, que
+            // navegan por índice (± columnas), coinciden con lo que se ve.
+            let x = Metrics.padding + CGFloat(column) * (cell.width + Metrics.spacing)
             let y = size.height - Metrics.padding - CGFloat(row + 1) * cell.height - CGFloat(row) * Metrics.spacing
 
             let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
@@ -113,6 +118,12 @@ final class WindowSwitcherView {
 
         let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        reportColumnsIfChanged(columns)
+    }
+
+    private func reportColumnsIfChanged(_ columns: Int) {
+        guard columns != reportedColumns else { return }
+        reportedColumns = columns
         onColumnsChanged(columns)
     }
 
@@ -201,6 +212,8 @@ private final class SwitcherCell: NSView {
         frame.contains(point) ? self : nil
     }
 
+    // Vacío a propósito: la celda se queda con el mouseDown (por defecto `NSView` lo pasa al
+    // responder siguiente) y el clic se resuelve en `mouseUp`.
     override func mouseDown(with event: NSEvent) {}
 
     /// El clic cuenta al soltar el botón dentro de la celda, como un botón.
