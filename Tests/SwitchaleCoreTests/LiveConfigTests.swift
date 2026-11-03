@@ -92,9 +92,27 @@ struct LiveConfigTests {
     @Test("Cambiar el Activation Delay: la próxima Switch Session pide el temporizador con el valor nuevo")
     func activationDelayLive() {
         var c = core(windows)
-        _ = c.send(.configChanged(.init(activationDelayMilliseconds: 200)))
+        _ = c.send(.configChanged(.init(activationDelay: ActivationDelay(milliseconds: 200))))
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false))
             == [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: 200)])
+    }
+
+    @Test("Un Activation Delay fuera de rango queda en el extremo más cercano: entre 0 y 500 ms",
+          arguments: [(-20, 0), (0, 0), (500, 500), (1000, 500)])
+    func activationDelayClamps(configured: Int, expected: Int) {
+        var c = core(windows)
+        _ = c.send(.configChanged(.init(activationDelay: ActivationDelay(milliseconds: configured))))
+        #expect(c.send(.keyDown(.tab, [.command], isRepeat: false))
+            == [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: expected)])
+    }
+
+    @Test("El Activation Delay va de a 10 ms: se redondea al más cercano",
+          arguments: [(84, 80), (85, 90), (86, 90)])
+    func activationDelaySteps(configured: Int, expected: Int) {
+        var c = core(windows)
+        _ = c.send(.configChanged(.init(activationDelay: ActivationDelay(milliseconds: configured))))
+        #expect(c.send(.keyDown(.tab, [.command], isRepeat: false))
+            == [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: expected)])
     }
 
     @Test("Desactivar en vivo la inclusión de Minimized Windows las saca de la próxima Switch Session")
@@ -122,7 +140,7 @@ struct LiveConfigTests {
     func restoreDefaults() {
         var c = core(windows)
         var custom = config(.allWindows, hotkey: Hotkey(modifier: .option, key: .tab))
-        custom.activationDelayMilliseconds = 300
+        custom.activationDelay = ActivationDelay(milliseconds: 300)
         _ = c.send(.configChanged(custom))
         _ = c.send(.configChanged(SwitcherConfig()))
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false))
@@ -143,18 +161,32 @@ struct LiveConfigTests {
     }
 }
 
-@Suite("Tamaño de Thumbnail del slider")
-struct ThumbnailSizeSliderTests {
-    @Test("El slider fija el ancho y la altura sigue la proporción 16:10 del tamaño por defecto")
-    func proportion() {
-        #expect(ThumbnailSize(width: 160) == ThumbnailSize())
-        #expect(ThumbnailSize(width: 224) == ThumbnailSize(width: 224, height: 140))
+@Suite("Tamaño de Thumbnail")
+struct ThumbnailSizeTests {
+    @Test("El Window Switcher muestra las Thumbnails del ancho configurado, con la proporción 16:10 del tamaño por defecto",
+          arguments: [(160, 160, 100), (224, 224, 140), (96, 96, 60)])
+    func proportion(width: Int, expectedWidth: Int, expectedHeight: Int) {
+        #expect(shownThumbnailSize(width: width) == ThumbnailSize(width: expectedWidth, height: expectedHeight))
     }
 
-    @Test("Un ancho fuera del rango del slider queda en el extremo más cercano")
-    func clamps() {
-        #expect(ThumbnailSize(width: 10) == ThumbnailSize(width: 96, height: 60))
-        #expect(ThumbnailSize(width: 1000) == ThumbnailSize(width: 224, height: 140))
+    @Test("Un ancho fuera de rango queda en el extremo más cercano: entre 96 y 224 puntos",
+          arguments: [(10, 96, 60), (1000, 224, 140)])
+    func clamps(width: Int, expectedWidth: Int, expectedHeight: Int) {
+        #expect(shownThumbnailSize(width: width) == ThumbnailSize(width: expectedWidth, height: expectedHeight))
+    }
+
+    @Test("El ancho va de a 16 puntos desde 96: se redondea al más cercano",
+          arguments: [(170, 176, 110), (103, 96, 60), (105, 112, 70)])
+    func steps(width: Int, expectedWidth: Int, expectedHeight: Int) {
+        #expect(shownThumbnailSize(width: width) == ThumbnailSize(width: expectedWidth, height: expectedHeight))
+    }
+
+    /// El tamaño de Thumbnail con el que se muestra el Window Switcher con este ancho configurado.
+    private func shownThumbnailSize(width: Int) -> ThumbnailSize? {
+        var config = SwitcherConfig()
+        config.thumbnailSize = ThumbnailSize(width: width)
+        var c = core([win(1, stack: 0), win(2, stack: 1)], config: config)
+        return shown(holdHotkey(&c))?.thumbnailSize
     }
 }
 

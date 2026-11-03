@@ -14,8 +14,7 @@ public struct SwitcherConfig: Sendable, Equatable {
     /// Los Scopes activados. Un Scope desactivado no abre Switch Sessions: su Hotkey hace lo que
     /// hace en macOS.
     public var enabledScopes: Set<Scope>
-    /// El Hotkey de cada Scope; si falta uno, vale el del Scope por defecto.
-    public var hotkeys: [Scope: Hotkey]
+    public var hotkeys: ScopeHotkeys
     /// Incluir las Minimized Windows (por defecto sí).
     public var includesMinimizedWindows: Bool
     /// Incluir las Windows de Hidden Apps (por defecto sí).
@@ -23,18 +22,17 @@ public struct SwitcherConfig: Sendable, Equatable {
     /// Incluir las Windows de otras pantallas (por defecto sí).
     public var includesOtherScreens: Bool
     public var panelScreen: PanelScreen
-    /// Activation Delay por defecto: 80 ms.
-    public var activationDelayMilliseconds: Int
+    public var activationDelay: ActivationDelay
 
-    /// Tamaño de las Thumbnails (slider de Appearance).
+    /// Tamaño de las Thumbnails del Window Switcher.
     public var thumbnailSize: ThumbnailSize
 
     public init(
         enabledScopes: Set<Scope> = Set(Scope.allCases),
-        hotkeys: [Scope: Hotkey] = Dictionary(uniqueKeysWithValues: Scope.allCases.map { ($0, $0.defaultHotkey) }),
+        hotkeys: ScopeHotkeys = ScopeHotkeys(),
         includesMinimizedWindows: Bool = true,
         includesHiddenApps: Bool = true, includesOtherScreens: Bool = true,
-        panelScreen: PanelScreen = .focusedWindow, activationDelayMilliseconds: Int = 80,
+        panelScreen: PanelScreen = .focusedWindow, activationDelay: ActivationDelay = ActivationDelay(),
         thumbnailSize: ThumbnailSize = ThumbnailSize()
     ) {
         self.enabledScopes = enabledScopes
@@ -43,25 +41,21 @@ public struct SwitcherConfig: Sendable, Equatable {
         self.includesHiddenApps = includesHiddenApps
         self.includesOtherScreens = includesOtherScreens
         self.panelScreen = panelScreen
-        self.activationDelayMilliseconds = activationDelayMilliseconds
+        self.activationDelay = activationDelay
         self.thumbnailSize = thumbnailSize
-    }
-
-    public func hotkey(for scope: Scope) -> Hotkey {
-        hotkeys[scope] ?? scope.defaultHotkey
     }
 
     /// Si el Scope puede usar este Hotkey: ningún otro Scope lo tiene, esté activado o no. Así dos
     /// Scopes nunca comparten Hotkey, tampoco al activar uno desactivado.
     public func isHotkeyAvailable(_ hotkey: Hotkey, for scope: Scope) -> Bool {
-        Scope.allCases.allSatisfy { $0 == scope || self.hotkey(for: $0) != hotkey }
+        Scope.allCases.allSatisfy { $0 == scope || hotkeys[$0] != hotkey }
     }
 
     /// El Scope activado cuyo Hotkey es esta tecla con estos modificadores. Si dos Scopes activados
-    /// tienen el mismo Hotkey (solo con `defaults write`: Preferencias no lo permite), gana el
-    /// primero de `Scope.allCases`, All Windows.
+    /// tienen el mismo Hotkey (una configuración escrita a mano: `isHotkeyAvailable` lo evita),
+    /// gana el primero de `Scope.allCases`, All Windows.
     func scope(for key: KeyCode, _ modifiers: Modifiers) -> Scope? {
-        Scope.allCases.first { enabledScopes.contains($0) && hotkey(for: $0).matches(key, modifiers) }
+        Scope.allCases.first { enabledScopes.contains($0) && hotkeys[$0].matches(key, modifiers) }
     }
 }
 
@@ -114,7 +108,7 @@ public struct SwitcherContent: Sendable, Equatable {
     public var screen: ScreenID
     public var thumbnailSize: ThumbnailSize
 
-    public init(_ items: [SwitcherItem], selected: Int, screen: ScreenID, thumbnailSize: ThumbnailSize = ThumbnailSize()) {
+    public init(_ items: [SwitcherItem], selected: Int, screen: ScreenID, thumbnailSize: ThumbnailSize) {
         self.items = items
         self.selected = selected
         self.screen = screen
@@ -231,7 +225,7 @@ public struct SwitcherState: Sendable {
 
         init(scope: Scope, config: SwitcherConfig, items: ItemList, startsBackwards: Bool) {
             self.scope = scope
-            hotkey = config.hotkey(for: scope)
+            hotkey = config.hotkeys[scope]
             thumbnailSize = config.thumbnailSize
             self.items = items
             self.startsBackwards = startsBackwards
@@ -381,16 +375,16 @@ public struct SwitcherCore: Sendable {
             guard !isRepeat else { return (next, [.consumeEvent]) }
             next.session = .init(
                 scope: scope, config: config, items: items(next, scope),
-                startsBackwards: config.hotkey(for: scope).isReversed(by: modifiers)
+                startsBackwards: config.hotkeys[scope].isReversed(by: modifiers)
             )
-            return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelayMilliseconds)])
+            return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelay.milliseconds)])
 
         case .keyUp(let key):
             guard next.heldKeys.remove(key) != nil else { return (next, []) }
             return (next, [.consumeEvent])
 
         case .modifiersChanged(let modifiers):
-            guard let session = next.session, !modifiers.contains(session.hotkey.modifier) else { return (next, []) }
+            guard let session = next.session, !session.hotkey.isHeld(in: modifiers) else { return (next, []) }
             next.session = nil
             return (next, session.finishEffects(activating: session.selectedItem))
 

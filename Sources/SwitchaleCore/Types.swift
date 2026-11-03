@@ -45,18 +45,38 @@ public struct Modifiers: OptionSet, Sendable {
     public static let control = Modifiers(rawValue: 1 << 3)
 }
 
-/// Un modificador y una tecla que abren la Switch Session de un Scope. Se eligen en Preferencias
-/// con desplegables: un modificador (⌘, ⌥, ⌃ o ⇧) y una tecla (⇥ o `).
+/// El modificador de un Hotkey. El valor crudo es el nombre con el que se guarda.
+public enum HotkeyModifier: String, Sendable, CaseIterable {
+    case command, option, control, shift
+
+    public var modifiers: Modifiers {
+        switch self {
+        case .command: .command
+        case .option: .option
+        case .control: .control
+        case .shift: .shift
+        }
+    }
+}
+
+/// La tecla de un Hotkey. El valor crudo es el nombre con el que se guarda.
+public enum HotkeyKey: String, Sendable, CaseIterable {
+    case tab, grave
+
+    public var keyCode: KeyCode {
+        switch self {
+        case .tab: .tab
+        case .grave: .grave
+        }
+    }
+}
+
+/// Lo que abre la Switch Session de un Scope: un modificador (⌘, ⌥, ⌃ o ⇧) y una tecla (⇥ o `).
 public struct Hotkey: Sendable, Equatable {
-    public var modifier: Modifiers
-    public var key: KeyCode
+    public var modifier: HotkeyModifier
+    public var key: HotkeyKey
 
-    /// Los modificadores que se pueden elegir para un Hotkey.
-    public static let modifierChoices: [Modifiers] = [.command, .option, .control, .shift]
-    /// Las teclas que se pueden elegir para un Hotkey.
-    public static let keyChoices: [KeyCode] = [.tab, .grave]
-
-    public init(modifier: Modifiers, key: KeyCode) {
+    public init(modifier: HotkeyModifier, key: HotkeyKey) {
         self.modifier = modifier
         self.key = key
     }
@@ -71,10 +91,32 @@ public struct Hotkey: Sendable, Equatable {
         reversesWithShift && modifiers.contains(.shift)
     }
 
+    /// Si el modificador del Hotkey está entre estos modificadores (mientras lo esté, sigue la
+    /// Switch Session).
+    func isHeld(in modifiers: Modifiers) -> Bool {
+        modifiers.contains(modifier.modifiers)
+    }
+
     /// La tecla con el modificador, y ⇧ si el Hotkey retrocede con ⇧; ningún otro modificador.
     func matches(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
-        let allowed: Modifiers = reversesWithShift ? [modifier, .shift] : modifier
-        return key == self.key && modifiers.contains(modifier) && modifiers.subtracting(allowed).isEmpty
+        let allowed: Modifiers = reversesWithShift ? [modifier.modifiers, .shift] : modifier.modifiers
+        return key == self.key.keyCode && isHeld(in: modifiers) && modifiers.subtracting(allowed).isEmpty
+    }
+}
+
+/// El Activation Delay: entre 0 y 500 ms, de a 10 ms. Por defecto, 80 ms.
+public struct ActivationDelay: Sendable, Equatable {
+    public let milliseconds: Int
+
+    /// Los valores admitidos, en milisegundos.
+    public static let range = 0...500
+    /// El Activation Delay va de a tantos milisegundos.
+    public static let step = 10
+
+    /// El Activation Delay más cercano a estos milisegundos: dentro de `range` y múltiplo de `step`.
+    public init(milliseconds: Int = 80) {
+        let clamped = min(max(milliseconds, Self.range.lowerBound), Self.range.upperBound)
+        self.milliseconds = Int((Double(clamped) / Double(Self.step)).rounded()) * Self.step
     }
 }
 

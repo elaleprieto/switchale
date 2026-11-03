@@ -14,7 +14,7 @@ struct QuickSwitchTests {
 
     @Test("El Activation Delay sale de la configuración del núcleo")
     func configurableDelay() {
-        var c = core([win(1, stack: 0)], config: .init(activationDelayMilliseconds: 150))
+        var c = core([win(1, stack: 0)], config: .init(activationDelay: ActivationDelay(milliseconds: 150)))
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)).contains(.startActivationTimer(milliseconds: 150)))
     }
 
