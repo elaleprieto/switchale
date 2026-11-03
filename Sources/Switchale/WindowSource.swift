@@ -73,10 +73,11 @@ final class WindowSource {
     }
 
     private nonisolated static func capture(_ input: CaptureInput) -> Capture {
-        let (cgInfo, onScreenIDs) = cgWindowInfo()
+        let (cgInfo, onScreenIDs, pidsWithNormalWindows) = cgWindowInfo()
         let currentScreen = input.currentScreen
 
         var windows: [Window] = []
+        var windowlessApps: [AppID] = []
         var apps: [AppInfo] = []
         var newHandles: [WindowID: WindowHandle] = [:]
 
@@ -84,7 +85,15 @@ final class WindowSource {
             let appID = AppID(Int(app.processIdentifier))
             apps.append(AppInfo(id: appID, name: app.localizedName ?? ""))
             let appElement = axApplicationElement(pid: app.processIdentifier)
-            guard let axWindows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] else { continue }
+            let axWindows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] ?? []
+            let windowCount = windows.count
+            defer {
+                // Windowless: sin Windows nuestras y sin ventanas normales en CoreGraphics (que sí
+                // ve las de otros Spaces, que AX no lista).
+                if windows.count == windowCount, !pidsWithNormalWindows.contains(app.processIdentifier) {
+                    windowlessApps.append(appID)
+                }
+            }
 
             for element in axWindows {
                 // Si el id no está en CGWindowList (o no es de la capa normal), no es una Window.
@@ -112,7 +121,7 @@ final class WindowSource {
             }
         }
         return Capture(
-            snapshot: Snapshot(windows: windows, apps: apps, currentScreen: currentScreen),
+            snapshot: Snapshot(windows: windows, apps: apps, currentScreen: currentScreen, windowlessApps: windowlessApps),
             handles: newHandles
         )
     }
@@ -125,22 +134,26 @@ final class WindowSource {
         let bounds: CGRect
     }
 
-    private nonisolated static func cgWindowInfo() -> ([WindowID: CGEntry], Set<WindowID>) {
+    private nonisolated static func cgWindowInfo() -> ([WindowID: CGEntry], Set<WindowID>, Set<pid_t>) {
         let all = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         var entries: [WindowID: CGEntry] = [:]
+        var pidsWithNormalWindows = Set<pid_t>()
         for (index, info) in all.enumerated() {
             guard let number = info[kCGWindowNumber as String] as? CGWindowID else { continue }
             var bounds = CGRect.zero
             if let dictionary = info[kCGWindowBounds as String] as? NSDictionary {
                 CGRectMakeWithDictionaryRepresentation(dictionary, &bounds)
             }
-            entries[WindowID(Int(number))] = CGEntry(
-                layer: info[kCGWindowLayer as String] as? Int ?? 0, stackIndex: index, bounds: bounds
-            )
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            entries[WindowID(Int(number))] = CGEntry(layer: layer, stackIndex: index, bounds: bounds)
+            if layer == 0, bounds.width >= 100, bounds.height >= 100,
+               let pid = info[kCGWindowOwnerPID as String] as? pid_t {
+                pidsWithNormalWindows.insert(pid)
+            }
         }
         let onScreenIDs = Set(onScreen.compactMap { ($0[kCGWindowNumber as String] as? CGWindowID).map { WindowID(Int($0)) } })
-        return (entries, onScreenIDs)
+        return (entries, onScreenIDs, pidsWithNormalWindows)
     }
 
     /// Solo subrol estándar o diálogo, de al menos 100×100.

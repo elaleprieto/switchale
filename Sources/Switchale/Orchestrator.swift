@@ -57,6 +57,10 @@ final class Orchestrator {
                 } else {
                     dispatch(.activationFailed(id))
                 }
+            case .activateApp(let app):
+                if !activator.activateApp(pid: pid_t(app.rawValue)) {
+                    dispatch(.appActivationFailed(app))
+                }
             case .refreshSnapshot:
                 source.refresh()
             case .consumeEvent:
