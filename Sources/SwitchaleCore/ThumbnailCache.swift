@@ -6,9 +6,19 @@ public struct ThumbnailSize: Sendable, Equatable {
     public var width: Int
     public var height: Int
 
+    /// Los anchos que ofrece el slider de Preferencias; el por defecto (160) es el intermedio.
+    public static let widthRange = 96...224
+
     public init(width: Int = 160, height: Int = 100) {
         self.width = width
         self.height = height
+    }
+
+    /// El tamaño del slider de Preferencias: el ancho, dentro de `widthRange`, con la proporción
+    /// 16:10 del tamaño por defecto.
+    public init(width: Int) {
+        let clamped = min(max(width, Self.widthRange.lowerBound), Self.widthRange.upperBound)
+        self.init(width: clamped, height: clamped * 10 / 16)
     }
 }
 

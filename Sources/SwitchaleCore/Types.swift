@@ -45,18 +45,25 @@ public struct Modifiers: OptionSet, Sendable {
     public static let control = Modifiers(rawValue: 1 << 3)
 }
 
-/// Un modificador y una tecla que abren la Switch Session de un Scope.
+/// Un modificador y una tecla que abren la Switch Session de un Scope. Se eligen en Preferencias
+/// con desplegables: un modificador (⌘, ⌥, ⌃ o ⇧) y una tecla (⇥ o `).
 public struct Hotkey: Sendable, Equatable {
     public var modifier: Modifiers
     public var key: KeyCode
-    /// Si el Hotkey con ⇧ también vale (para retroceder). Si no, con ⇧ pasa al sistema.
-    public var reversesWithShift: Bool
 
-    public init(modifier: Modifiers, key: KeyCode, reversesWithShift: Bool) {
+    /// Los modificadores que se pueden elegir para un Hotkey.
+    public static let modifierChoices: [Modifiers] = [.command, .option, .control, .shift]
+    /// Las teclas que se pueden elegir para un Hotkey.
+    public static let keyChoices: [KeyCode] = [.tab, .grave]
+
+    public init(modifier: Modifiers, key: KeyCode) {
         self.modifier = modifier
         self.key = key
-        self.reversesWithShift = reversesWithShift
     }
+
+    /// Si el Hotkey con ⇧ también vale (para retroceder): solo con ⇥ y un modificador que no sea ⇧,
+    /// como ⌘⇧⇥. Con ` no: ⌥⇧` y ⌘⇧` pasan al sistema.
+    public var reversesWithShift: Bool { key == .tab && modifier != .shift }
 
     /// La tecla con el modificador, y ⇧ si el Hotkey retrocede con ⇧; ningún otro modificador.
     func matches(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
