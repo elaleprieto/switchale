@@ -2,11 +2,20 @@
 
 public struct SwitcherConfig: Sendable, Equatable {
     public var allWindowsEnabled: Bool
+    /// Incluir las Minimized Windows (por defecto sí).
+    public var includesMinimized: Bool
+    /// Incluir las Windows de Hidden Apps (por defecto sí).
+    public var includesHiddenApps: Bool
     /// Activation Delay por defecto: 80 ms.
     public var activationDelayMilliseconds: Int
 
-    public init(allWindowsEnabled: Bool = true, activationDelayMilliseconds: Int = 80) {
+    public init(
+        allWindowsEnabled: Bool = true, includesMinimized: Bool = true, includesHiddenApps: Bool = true,
+        activationDelayMilliseconds: Int = 80
+    ) {
         self.allWindowsEnabled = allWindowsEnabled
+        self.includesMinimized = includesMinimized
+        self.includesHiddenApps = includesHiddenApps
         self.activationDelayMilliseconds = activationDelayMilliseconds
     }
 }
@@ -58,11 +67,17 @@ public struct SwitcherItem: Sendable, Equatable {
     public var appID: AppID
     /// Título de la Window, o el nombre de la App si la Window no tiene título.
     public var title: String
+    /// La Window está Minimized (el panel la marca).
+    public var isMinimized: Bool
+    /// La Window es de una Hidden App (el panel la marca).
+    public var isAppHidden: Bool
 
-    public init(windowID: WindowID, appID: AppID, title: String) {
+    public init(windowID: WindowID, appID: AppID, title: String, isMinimized: Bool = false, isAppHidden: Bool = false) {
         self.windowID = windowID
         self.appID = appID
         self.title = title
+        self.isMinimized = isMinimized
+        self.isAppHidden = isAppHidden
     }
 }
 
@@ -233,15 +248,15 @@ public struct SwitcherCore: Sendable {
         key == .tab && modifiers.contains(.command) && modifiers.subtracting([.command, .shift]).isEmpty
     }
 
-    /// Reglas fijas de inclusión: Space y pantalla actuales, sin Minimized ni Windows de Hidden Apps.
+    /// Reglas de inclusión: Space y pantalla actuales fijos; Minimized y Hidden Apps según la configuración.
     private static func eligibleWindows(_ state: SwitcherState) -> [WindowID] {
         let windowsByID = state.snapshot.windowsByID
         return state.recency.compactMap { id in
             guard let window = windowsByID[id],
                   window.isInCurrentSpace,
                   window.screen == state.snapshot.currentScreen,
-                  !window.isMinimized,
-                  !window.isAppHidden
+                  state.config.includesMinimized || !window.isMinimized,
+                  state.config.includesHiddenApps || !window.isAppHidden
             else { return nil }
             return id
         }
@@ -257,7 +272,10 @@ extension Snapshot {
         return windows.compactMap { id in
             guard let window = windowsByID[id] else { return nil }
             let title = window.title.isEmpty ? appNames[window.appID] ?? "" : window.title
-            return SwitcherItem(windowID: id, appID: window.appID, title: title)
+            return SwitcherItem(
+                windowID: id, appID: window.appID, title: title,
+                isMinimized: window.isMinimized, isAppHidden: window.isAppHidden
+            )
         }
     }
 }
