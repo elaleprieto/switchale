@@ -65,6 +65,12 @@ public struct Hotkey: Sendable, Equatable {
     /// como ⌘⇧⇥. Con ` no: ⌥⇧` y ⌘⇧` pasan al sistema.
     public var reversesWithShift: Bool { key == .tab && modifier != .shift }
 
+    /// Si estos modificadores son los del Hotkey con ⇧, el que retrocede. Con ⇧ como modificador
+    /// del Hotkey, ⇧ no retrocede: es el Hotkey mismo.
+    func isReversed(by modifiers: Modifiers) -> Bool {
+        reversesWithShift && modifiers.contains(.shift)
+    }
+
     /// La tecla con el modificador, y ⇧ si el Hotkey retrocede con ⇧; ningún otro modificador.
     func matches(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
         let allowed: Modifiers = reversesWithShift ? [modifier, .shift] : modifier

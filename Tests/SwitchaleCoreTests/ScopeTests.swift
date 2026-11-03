@@ -81,6 +81,22 @@ struct CurrentAppScopeTests {
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
     }
 
+    @Test("Con switchale como App activa (Preferencias con foco), ⌥` lista sus Windows y alterna entre ellas")
+    func switchaleIsActiveApp() {
+        let switchale = 9
+        var c = core([
+            win(1, app: 1, stack: 2), win(5, app: switchale, stack: 0), win(6, app: switchale, stack: 1),
+        ], activeApp: 1)
+        _ = c.send(.appActivated(AppID(switchale)))
+        _ = c.send(.windowFocused(WindowID(5)))
+        _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
+        deliverFreshSnapshot(&c)
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init(
+            [item(5, app: switchale), item(6, app: switchale)], selected: 1, screen: mainScreen
+        ))])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(6))])
+    }
+
     @Test("La Switch Session de ⌥` termina al soltar ⌥, no ⌘")
     func endsOnOptionRelease() {
         var c = core([win(1, app: 1, stack: 0), win(2, app: 1, stack: 1)], activeApp: 1)
@@ -140,5 +156,33 @@ struct IndependentHotkeysTests {
         #expect(c.send(.keyDown(.grave, [], isRepeat: false)) == [])
         #expect(c.send(.keyDown(.grave, [.command], isRepeat: false)) == [])
         #expect(c.send(.keyDown(.grave, [.option, .control], isRepeat: false)) == [])
+    }
+}
+
+@Suite("Hotkeys repetidos entre Scopes")
+struct DuplicateHotkeysTests {
+    let windows = [win(1, app: 1, stack: 0), win(2, app: 2, stack: 1), win(3, app: 1, stack: 2)]
+
+    @Test("El Hotkey del otro Scope no está disponible para un Scope, aunque el otro esté desactivado")
+    func otherScopeHotkeyUnavailable() {
+        let config = SwitcherConfig(enabledScopes: [.currentApp])
+        #expect(!config.isHotkeyAvailable(Hotkey(modifier: .command, key: .tab), for: .currentApp))
+        #expect(!config.isHotkeyAvailable(Hotkey(modifier: .option, key: .grave), for: .allWindows))
+    }
+
+    @Test("Un Hotkey que no usa otro Scope está disponible, también el que ya tiene el Scope")
+    func freeHotkeyAvailable() {
+        let config = SwitcherConfig()
+        #expect(config.isHotkeyAvailable(Hotkey(modifier: .command, key: .grave), for: .currentApp))
+        #expect(config.isHotkeyAvailable(Hotkey(modifier: .option, key: .grave), for: .currentApp))
+    }
+
+    @Test("Si los dos Scopes activados tienen el mismo Hotkey (p. ej. con defaults write), abre All Windows")
+    func allWindowsWins() {
+        var config = SwitcherConfig()
+        config.hotkeys[.currentApp] = Hotkey(modifier: .command, key: .tab)
+        var c = core(windows, config: config, activeApp: 1)
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(2))])
     }
 }

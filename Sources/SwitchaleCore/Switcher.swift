@@ -50,6 +50,19 @@ public struct SwitcherConfig: Sendable, Equatable {
     public func hotkey(for scope: Scope) -> Hotkey {
         hotkeys[scope] ?? scope.defaultHotkey
     }
+
+    /// Si el Scope puede usar este Hotkey: ningún otro Scope lo tiene, esté activado o no. Así dos
+    /// Scopes nunca comparten Hotkey, tampoco al activar uno desactivado.
+    public func isHotkeyAvailable(_ hotkey: Hotkey, for scope: Scope) -> Bool {
+        Scope.allCases.allSatisfy { $0 == scope || self.hotkey(for: $0) != hotkey }
+    }
+
+    /// El Scope activado cuyo Hotkey es esta tecla con estos modificadores. Si dos Scopes activados
+    /// tienen el mismo Hotkey (solo con `defaults write`: Preferencias no lo permite), gana el
+    /// primero de `Scope.allCases`, All Windows.
+    func scope(for key: KeyCode, _ modifiers: Modifiers) -> Scope? {
+        Scope.allCases.first { enabledScopes.contains($0) && hotkey(for: $0).matches(key, modifiers) }
+    }
 }
 
 public enum SwitcherEvent: Sendable, Equatable {
@@ -358,16 +371,18 @@ public struct SwitcherCore: Sendable {
             if var session = next.session {
                 guard session.hotkey.matches(key, modifiers) else { return (next, []) }
                 next.heldKeys.insert(key)
-                let moved = session.move(modifiers.contains(.shift) ? .previous : .next)
+                let moved = session.move(session.hotkey.isReversed(by: modifiers) ? .previous : .next)
                 next.session = session
                 return (next, session.selectionEffects(moved: moved))
             }
             let config = next.config
-            guard let scope = Scope.allCases.first(where: { config.enabledScopes.contains($0) && config.hotkey(for: $0).matches(key, modifiers) })
-            else { return (next, []) }
+            guard let scope = config.scope(for: key, modifiers) else { return (next, []) }
             next.heldKeys.insert(key)
             guard !isRepeat else { return (next, [.consumeEvent]) }
-            next.session = .init(scope: scope, config: config, items: items(next, scope), startsBackwards: modifiers.contains(.shift))
+            next.session = .init(
+                scope: scope, config: config, items: items(next, scope),
+                startsBackwards: config.hotkey(for: scope).isReversed(by: modifiers)
+            )
             return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelayMilliseconds)])
 
         case .keyUp(let key):

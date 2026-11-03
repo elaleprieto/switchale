@@ -50,6 +50,35 @@ struct LiveConfigTests {
         #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(3))])
     }
 
+    @Test("Con ⇧⇥ como Hotkey, tocarlo y soltar ⇧ es un Quick Switch: activa la segunda Window, no la última")
+    func shiftHotkeyQuickSwitch() {
+        var c = core(windows)
+        _ = c.send(.configChanged(config(.allWindows, hotkey: Hotkey(modifier: .shift, key: .tab))))
+        #expect(c.send(.keyDown(.tab, [.shift], isRepeat: false))
+            == [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: 80)])
+        #expect(c.send(.keyUp(.tab)) == [.consumeEvent])
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(2))])
+    }
+
+    @Test("Con ⇧⇥ como Hotkey, apretar ⇥ dentro de la Switch Session avanza la selección")
+    func shiftHotkeyAdvances() {
+        var c = core(windows)
+        _ = c.send(.configChanged(config(.allWindows, hotkey: Hotkey(modifier: .shift, key: .tab))))
+        _ = c.send(.keyDown(.tab, [.shift], isRepeat: false))
+        deliverFreshSnapshot(&c)
+        _ = c.send(.activationDelayElapsed)
+        #expect(c.send(.keyDown(.tab, [.shift], isRepeat: false)) == [.consumeEvent, .selectItem(2)])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
+    }
+
+    @Test("Con ⇧` como Hotkey de Current App, tocarlo y soltar ⇧ activa la segunda Window de la App activa")
+    func shiftGraveHotkey() {
+        var c = core(windows + [win(4, app: 1, stack: 3)], activeApp: 1)
+        _ = c.send(.configChanged(config(.currentApp, hotkey: Hotkey(modifier: .shift, key: .grave))))
+        _ = c.send(.keyDown(.grave, [.shift], isRepeat: false))
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(3))])
+    }
+
     @Test("Desactivar un Scope en vivo: su Hotkey pasa al sistema desde la próxima Switch Session")
     func disableScopeLive() {
         var c = core(windows, activeApp: 1)
