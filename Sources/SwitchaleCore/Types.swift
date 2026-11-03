@@ -21,6 +21,8 @@ public struct KeyCode: Sendable, Hashable {
 
     /// ⇥ (kVK_Tab).
     public static let tab = KeyCode(48)
+    /// ` (kVK_ANSI_Grave).
+    public static let grave = KeyCode(50)
     /// Esc (kVK_Escape).
     public static let escape = KeyCode(53)
 }

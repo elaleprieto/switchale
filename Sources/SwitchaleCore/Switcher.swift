@@ -2,12 +2,22 @@
 
 public struct SwitcherConfig: Sendable, Equatable {
     public var allWindowsEnabled: Bool
+    public var currentAppEnabled: Bool
     /// Activation Delay por defecto: 80 ms.
     public var activationDelayMilliseconds: Int
 
-    public init(allWindowsEnabled: Bool = true, activationDelayMilliseconds: Int = 80) {
+    public init(allWindowsEnabled: Bool = true, currentAppEnabled: Bool = true, activationDelayMilliseconds: Int = 80) {
         self.allWindowsEnabled = allWindowsEnabled
+        self.currentAppEnabled = currentAppEnabled
         self.activationDelayMilliseconds = activationDelayMilliseconds
+    }
+
+    /// Un Scope desactivado no abre Switch Sessions: su Hotkey hace lo que hace en macOS.
+    func isEnabled(_ scope: Scope) -> Bool {
+        switch scope {
+        case .allWindows: allWindowsEnabled
+        case .currentApp: currentAppEnabled
+        }
     }
 }
 
@@ -18,6 +28,8 @@ public enum SwitcherEvent: Sendable, Equatable {
     case modifiersChanged(Modifiers)
     case activationDelayElapsed
     case windowFocused(WindowID)
+    /// Pasó a ser la App activa (la de adelante), tenga Windows o no.
+    case appActivated(AppID)
     /// El efecto `.activate` no pudo activar la Window (se cerró después de la última foto).
     case activationFailed(WindowID)
     case snapshot(Snapshot)
@@ -71,11 +83,14 @@ public struct SwitcherState: Sendable {
     var snapshot = Snapshot(windows: [], apps: [], currentScreen: ScreenID(0))
     /// Recency Order: de la más reciente a la menos reciente.
     var recency: [WindowID] = []
+    /// La App activa, que define el Scope Current App.
+    var activeApp: AppID?
     var session: Session?
     /// Teclas consumidas cuyo keyUp hay que consumir (puede llegar después de terminar la sesión).
     var heldKeys: Set<KeyCode> = []
 
     struct Session {
+        let scope: Scope
         var delayElapsed = false
         /// Lo que muestra el Window Switcher, o nil si no está visible.
         private var shown: SwitcherContent?
@@ -85,7 +100,8 @@ public struct SwitcherState: Sendable {
         /// La Switch Session arrancó con ⌘⇧⇥.
         let startsBackwards: Bool
 
-        init(windows: [WindowID], startsBackwards: Bool) {
+        init(scope: Scope, windows: [WindowID], startsBackwards: Bool) {
+            self.scope = scope
             self.windows = windows
             self.startsBackwards = startsBackwards
             selected = Self.initialSelection(windows, backwards: startsBackwards)
@@ -169,15 +185,19 @@ public struct SwitcherCore: Sendable {
             return (next, [.consumeEvent] + session.closingEffects)
 
         case .keyDown(let key, let modifiers, let isRepeat):
-            guard isQuickSwitchHotkey(key, modifiers), next.config.allWindowsEnabled else { return (next, []) }
-            next.heldKeys.insert(key)
+            // Dentro de una Switch Session, el Hotkey de su Scope (con o sin ⇧) mueve la selección.
             if var session = next.session {
+                guard session.scope.hotkey.matches(key, modifiers) else { return (next, []) }
+                next.heldKeys.insert(key)
                 session.move(by: modifiers.contains(.shift) ? -1 : 1)
                 next.session = session
                 return (next, session.isSwitcherVisible ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
             }
+            guard let scope = Scope.allCases.first(where: { next.config.isEnabled($0) && $0.hotkey.matches(key, modifiers) })
+            else { return (next, []) }
+            next.heldKeys.insert(key)
             guard !isRepeat else { return (next, [.consumeEvent]) }
-            next.session = .init(windows: eligibleWindows(next), startsBackwards: modifiers.contains(.shift))
+            next.session = .init(scope: scope, windows: eligibleWindows(next, scope), startsBackwards: modifiers.contains(.shift))
             return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelayMilliseconds)])
 
         case .keyUp(let key):
@@ -185,7 +205,7 @@ public struct SwitcherCore: Sendable {
             return (next, [.consumeEvent])
 
         case .modifiersChanged(let modifiers):
-            guard let session = next.session, !modifiers.contains(.command) else { return (next, []) }
+            guard let session = next.session, !modifiers.contains(session.scope.hotkey.modifier) else { return (next, []) }
             next.session = nil
             var effects = session.closingEffects
             if session.windows.count >= 2, let target = session.selectedWindow { effects.append(.activate(target)) }
@@ -203,6 +223,10 @@ public struct SwitcherCore: Sendable {
             next.recency.insert(id, at: 0)
             return (next, [])
 
+        case .appActivated(let app):
+            next.activeApp = app
+            return (next, [])
+
         case .activationFailed:
             // No se registra foco en esa Window; la foto nueva la saca de Recency Order si ya no existe.
             return (next, [.refreshSnapshot])
@@ -217,7 +241,7 @@ public struct SwitcherCore: Sendable {
                 .sorted { $0.stackIndex < $1.stackIndex }
             next.recency += unknown.map(\.id)
             guard var session = next.session else { return (next, []) }
-            session.replaceWindows(with: eligibleWindows(next))
+            session.replaceWindows(with: eligibleWindows(next, session.scope))
             let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
@@ -228,16 +252,13 @@ public struct SwitcherCore: Sendable {
         }
     }
 
-    /// ⌘⇥ y ⌘⇧⇥: abren la Switch Session; dentro de ella, avanzan o retroceden la selección.
-    private static func isQuickSwitchHotkey(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
-        key == .tab && modifiers.contains(.command) && modifiers.subtracting([.command, .shift]).isEmpty
-    }
-
+    /// Las Windows del Scope en Recency Order. Current App: solo las de la App activa.
     /// Reglas fijas de inclusión: Space y pantalla actuales, sin Minimized ni Windows de Hidden Apps.
-    private static func eligibleWindows(_ state: SwitcherState) -> [WindowID] {
+    private static func eligibleWindows(_ state: SwitcherState, _ scope: Scope) -> [WindowID] {
         let windowsByID = state.snapshot.windowsByID
         return state.recency.compactMap { id in
             guard let window = windowsByID[id],
+                  scope == .allWindows || window.appID == state.activeApp,
                   window.isInCurrentSpace,
                   window.screen == state.snapshot.currentScreen,
                   !window.isMinimized,
