@@ -2,18 +2,24 @@ import AppKit
 import ApplicationServices
 import SwitchaleCore
 
-/// Traduce cambios de foco (AX por App y NSWorkspace) en "una Window recibió foco",
-/// y avisa cuando cambia el conjunto de Apps para refrescar la foto.
+/// Traduce cambios de foco (AX por App y NSWorkspace) en "una Window recibió foco" y
+/// "pasó a ser la App activa", y avisa cuando cambia el conjunto de Apps para refrescar la foto.
 @MainActor
 final class FocusTracker {
     private var observers: [pid_t: AXObserver] = [:]
     private var tokens: [NSObjectProtocol] = []
     private var retryTimer: Timer?
     private let onFocus: (WindowID) -> Void
+    private let onAppActivated: (AppID) -> Void
     private let onAppsChanged: () -> Void
 
-    init(onFocus: @escaping (WindowID) -> Void, onAppsChanged: @escaping () -> Void) {
+    init(
+        onFocus: @escaping (WindowID) -> Void,
+        onAppActivated: @escaping (AppID) -> Void,
+        onAppsChanged: @escaping () -> Void
+    ) {
         self.onFocus = onFocus
+        self.onAppActivated = onAppActivated
         self.onAppsChanged = onAppsChanged
     }
 
@@ -29,10 +35,16 @@ final class FocusTracker {
             self?.onAppsChanged()
         }
         observeWorkspace(NSWorkspace.didActivateApplicationNotification) { [weak self] app in
-            self?.reportFocusedWindow(pid: app.processIdentifier)
+            self?.reportActivation(of: app)
         }
         observeWorkspace(NSWorkspace.didHideApplicationNotification) { [weak self] _ in self?.onAppsChanged() }
         observeWorkspace(NSWorkspace.didUnhideApplicationNotification) { [weak self] _ in self?.onAppsChanged() }
+    }
+
+    /// Informa que la App pasó a ser la activa (incluida switchale) y su Window enfocada, si tiene.
+    func reportActivation(of app: NSRunningApplication) {
+        onAppActivated(AppID(Int(app.processIdentifier)))
+        reportFocusedWindow(pid: app.processIdentifier)
     }
 
     /// Informa la Window enfocada de la App (si hay una).
@@ -50,7 +62,7 @@ final class FocusTracker {
     }
 
     private func observeAllApps() {
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+        for app in NSWorkspace.shared.runningApplications where app.ownsSwitchableWindows {
             observe(app)
         }
     }

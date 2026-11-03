@@ -37,7 +37,7 @@ final class WindowSource {
         isCapturing = true
         // Lo de AppKit (pantalla actual, Apps en ejecución) se lee acá, en el main thread.
         let input = CaptureInput(
-            apps: NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated },
+            apps: NSWorkspace.shared.runningApplications.filter { $0.ownsSwitchableWindows && !$0.isTerminated },
             currentScreen: Self.currentScreen()
         )
         queue.async { [weak self] in
@@ -174,6 +174,14 @@ final class WindowSource {
             CGDisplayBounds(first).intersection(bounds).area < CGDisplayBounds(second).intersection(bounds).area
         }
         return best.map { ScreenID(Int($0)) }
+    }
+}
+
+extension NSRunningApplication {
+    /// Las Apps regulares, y switchale aunque no tenga ícono en el Dock (`LSUIElement`): sus
+    /// Windows (Preferencias, permisos) son Windows como cualquier otra, también para Current App.
+    var ownsSwitchableWindows: Bool {
+        activationPolicy == .regular || processIdentifier == ProcessInfo.processInfo.processIdentifier
     }
 }
 
