@@ -1,4 +1,4 @@
-// Núcleo del switcher: Swift puro, sin AppKit, AX ni CoreGraphics.
+// Núcleo del Window Switcher: Swift puro, sin AppKit, AX ni CoreGraphics.
 
 /// Estado del login item según macOS (espejo de `SMAppService.Status`).
 public enum LoginItemStatus: Sendable, Equatable {

@@ -1,8 +1,9 @@
 import AppKit
 import SwitchaleCore
 
-/// Ícono de switchale en la barra de menú y su menú ("Preferencias…" y "Salir").
-/// Si falta Accesibilidad, el menú lo avisa y deja reabrir la ventana de permisos.
+/// Ícono de switchale en la barra de menú y su menú: "Preferencias…" (deshabilitado
+/// por ahora), "Permisos…" (abre la ventana de permisos) y "Salir". Si falta
+/// Accesibilidad, el menú arranca con un aviso que también abre la ventana de permisos.
 @MainActor
 final class StatusBarController: NSObject {
     private static let appName = "switchale"

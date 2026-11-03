@@ -20,7 +20,7 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
 
 targets:
-  # Núcleo del switcher: Swift puro. No importa AppKit, AX ni CoreGraphics.
+  # Núcleo del Window Switcher: Swift puro. No importa AppKit, AX ni CoreGraphics.
   SwitchaleCore:
     type: framework
     platform: macOS

@@ -2,14 +2,20 @@ import AppKit
 import SwitchaleCore
 
 /// Ventana de permisos: una fila por permiso con su estado, una aclaración de qué
-/// pasa sin él y un botón que abre el panel de Configuración del Sistema.
+/// pasa sin él, un botón que lo pide o abre el panel de Configuración del Sistema
+/// (según decida `PermissionsGuide`) y, si hace falta, un botón para reabrir switchale.
 @MainActor
 final class PermissionsWindowController: NSWindowController {
-    private let onRequest: (Permission) -> Void
+    private let onAction: (Permission, PermissionAction) -> Void
+    private let onRelaunch: () -> Void
     private let stack = NSStackView()
 
-    init(onRequest: @escaping (Permission) -> Void) {
-        self.onRequest = onRequest
+    init(
+        onAction: @escaping (Permission, PermissionAction) -> Void,
+        onRelaunch: @escaping () -> Void
+    ) {
+        self.onAction = onAction
+        self.onRelaunch = onRelaunch
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 240),
             styleMask: [.titled, .closable],
@@ -89,25 +95,49 @@ final class PermissionsWindowController: NSWindowController {
             label.textColor = .secondaryLabelColor
             column.addArrangedSubview(label)
         }
-        if !row.isGranted {
+        if let action = row.action {
             let button = PermissionButton(
-                title: "Abrir Configuración del Sistema…",
+                title: Self.buttonTitle(action),
                 target: self,
-                action: #selector(openSettings(_:))
+                action: #selector(performAction(_:))
             )
             button.permission = row.permission
+            button.permissionAction = action
             column.addArrangedSubview(button)
+        }
+        if let hint = row.relaunchHint {
+            let label = NSTextField(wrappingLabelWithString: hint)
+            label.preferredMaxLayoutWidth = 440
+            label.textColor = .secondaryLabelColor
+            column.addArrangedSubview(label)
+            column.addArrangedSubview(NSButton(
+                title: "Reabrir switchale",
+                target: self,
+                action: #selector(relaunch)
+            ))
         }
         return column
     }
 
-    @objc private func openSettings(_ sender: PermissionButton) {
-        guard let permission = sender.permission else { return }
-        onRequest(permission)
+    private static func buttonTitle(_ action: PermissionAction) -> String {
+        switch action {
+        case .request: "Otorgar permiso…"
+        case .openSettings: "Abrir Configuración del Sistema…"
+        }
+    }
+
+    @objc private func performAction(_ sender: PermissionButton) {
+        guard let permission = sender.permission, let action = sender.permissionAction else { return }
+        onAction(permission, action)
+    }
+
+    @objc private func relaunch() {
+        onRelaunch()
     }
 }
 
-/// Botón que recuerda a qué permiso corresponde.
+/// Botón que recuerda a qué permiso y acción corresponde.
 private final class PermissionButton: NSButton {
     var permission: Permission?
+    var permissionAction: PermissionAction?
 }
