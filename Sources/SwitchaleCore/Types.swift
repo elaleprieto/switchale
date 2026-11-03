@@ -79,11 +79,15 @@ public struct Snapshot: Sendable, Equatable {
     public var apps: [AppInfo]
     /// La pantalla donde está el usuario ahora.
     public var currentScreen: ScreenID
+    /// Apps regulares en ejecución que el adaptador no encontró con ninguna Window. El núcleo
+    /// descarta las que sí tienen una Window en la foto.
+    public var windowlessApps: [AppID]
 
-    public init(windows: [Window], apps: [AppInfo], currentScreen: ScreenID) {
+    public init(windows: [Window], apps: [AppInfo], currentScreen: ScreenID, windowlessApps: [AppID] = []) {
         self.windows = windows
         self.apps = apps
         self.currentScreen = currentScreen
+        self.windowlessApps = windowlessApps
     }
 
     var windowsByID: [WindowID: Window] {
