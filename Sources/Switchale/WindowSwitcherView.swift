@@ -58,7 +58,8 @@ final class WindowSwitcherView {
 
     private func layout(_ content: SwitcherContent) {
         let items = content.items
-        let screen = NSScreen.main ?? NSScreen.screens.first
+        let screen = NSScreen.screens.first { WindowSource.displayID(of: $0).map { ScreenID(Int($0)) } == content.screen }
+            ?? NSScreen.main ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
         let cell = Metrics.cellSize

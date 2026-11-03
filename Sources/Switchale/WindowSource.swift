@@ -38,7 +38,9 @@ final class WindowSource {
         // Lo de AppKit (pantalla actual, Apps en ejecución) se lee acá, en el main thread.
         let input = CaptureInput(
             apps: NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated },
-            currentScreen: Self.currentScreen()
+            currentScreen: Self.currentScreen(),
+            mouseScreen: Self.mouseScreen(),
+            primaryScreen: ScreenID(Int(CGMainDisplayID()))
         )
         queue.async { [weak self] in
             let capture = Self.capture(input)
@@ -65,6 +67,8 @@ final class WindowSource {
     private struct CaptureInput: @unchecked Sendable {
         let apps: [NSRunningApplication]
         let currentScreen: ScreenID
+        let mouseScreen: ScreenID
+        let primaryScreen: ScreenID
     }
 
     private struct Capture: @unchecked Sendable {
@@ -112,7 +116,10 @@ final class WindowSource {
             }
         }
         return Capture(
-            snapshot: Snapshot(windows: windows, apps: apps, currentScreen: currentScreen),
+            snapshot: Snapshot(
+                windows: windows, apps: apps, currentScreen: currentScreen,
+                mouseScreen: input.mouseScreen, primaryScreen: input.primaryScreen
+            ),
             handles: newHandles
         )
     }
@@ -161,7 +168,13 @@ final class WindowSource {
         return ScreenID(Int(display))
     }
 
-    private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
+    private static func mouseScreen() -> ScreenID {
+        let location = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(location) }
+        return screen.flatMap(displayID(of:)).map { ScreenID(Int($0)) } ?? currentScreen()
+    }
+
+    static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
     }
 

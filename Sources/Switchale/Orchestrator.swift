@@ -19,6 +19,7 @@ final class Orchestrator {
     private var focus: FocusTracker?
 
     func start() {
+        dispatch(.configChanged(SwitcherPreferences.load()))
         source.refresh()
 
         let focus = FocusTracker(
