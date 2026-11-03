@@ -14,11 +14,7 @@ enum SwitcherPreferences {
         if defaults.object(forKey: includeOtherScreensKey) != nil {
             config.includeOtherScreens = defaults.bool(forKey: includeOtherScreensKey)
         }
-        switch defaults.string(forKey: panelScreenKey) {
-        case "mouse": config.panelScreen = .mouse
-        case "primary": config.panelScreen = .primary
-        default: config.panelScreen = .focusedWindow
-        }
+        config.panelScreen = defaults.string(forKey: panelScreenKey).flatMap(PanelScreen.init(rawValue:)) ?? .focusedWindow
         return config
     }
 }

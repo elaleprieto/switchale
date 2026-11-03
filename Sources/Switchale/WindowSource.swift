@@ -38,9 +38,8 @@ final class WindowSource {
         // Lo de AppKit (pantalla actual, Apps en ejecución) se lee acá, en el main thread.
         let input = CaptureInput(
             apps: NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated },
-            currentScreen: Self.currentScreen(),
-            mouseScreen: Self.mouseScreen(),
-            primaryScreen: ScreenID(Int(CGMainDisplayID()))
+            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            screens: Screens(mouse: Self.mouseScreen(), primary: ScreenID(display: CGMainDisplayID()))
         )
         queue.async { [weak self] in
             let capture = Self.capture(input)
@@ -66,9 +65,8 @@ final class WindowSource {
     /// propiedades de `NSRunningApplication` se pueden leer desde cualquier hilo.
     private struct CaptureInput: @unchecked Sendable {
         let apps: [NSRunningApplication]
-        let currentScreen: ScreenID
-        let mouseScreen: ScreenID
-        let primaryScreen: ScreenID
+        let frontmostPID: pid_t?
+        let screens: Screens
     }
 
     private struct Capture: @unchecked Sendable {
@@ -78,7 +76,8 @@ final class WindowSource {
 
     private nonisolated static func capture(_ input: CaptureInput) -> Capture {
         let (cgInfo, onScreenIDs) = cgWindowInfo()
-        let currentScreen = input.currentScreen
+        // La Window con foco según AX, leída al tomar la foto (la pantalla actual sale de ella).
+        let focusedWindow = input.frontmostPID.flatMap { axFocusedWindowID(pid: $0) }
 
         var windows: [Window] = []
         var apps: [AppInfo] = []
@@ -106,7 +105,7 @@ final class WindowSource {
                     id: id,
                     appID: appID,
                     title: (axAttribute(element, kAXTitleAttribute) as? String) ?? "",
-                    screen: screen(containing: entry.bounds) ?? currentScreen,
+                    screen: screen(containing: entry.bounds) ?? input.screens.mouse,
                     isInCurrentSpace: isInCurrentSpace,
                     isMinimized: isMinimized,
                     isAppHidden: app.isHidden,
@@ -116,10 +115,7 @@ final class WindowSource {
             }
         }
         return Capture(
-            snapshot: Snapshot(
-                windows: windows, apps: apps, currentScreen: currentScreen,
-                mouseScreen: input.mouseScreen, primaryScreen: input.primaryScreen
-            ),
+            snapshot: Snapshot(windows: windows, apps: apps, focusedWindow: focusedWindow, screens: input.screens),
             handles: newHandles
         )
     }
@@ -163,19 +159,11 @@ final class WindowSource {
 
     // MARK: - Pantallas
 
-    private static func currentScreen() -> ScreenID {
-        let display = NSScreen.main.flatMap(displayID(of:)) ?? CGMainDisplayID()
-        return ScreenID(Int(display))
-    }
-
+    /// La pantalla donde está el mouse; si no cae en ninguna, la principal.
     private static func mouseScreen() -> ScreenID {
         let location = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(location) }
-        return screen.flatMap(displayID(of:)).map { ScreenID(Int($0)) } ?? currentScreen()
-    }
-
-    static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
-        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+        return NSScreen.screens.first { $0.frame.contains(location) }?.screenID
+            ?? ScreenID(display: CGMainDisplayID())
     }
 
     /// Pantalla con mayor intersección con `bounds` (coordenadas globales de CoreGraphics).
@@ -186,7 +174,7 @@ final class WindowSource {
         let best = displays.prefix(Int(count)).max { first, second in
             CGDisplayBounds(first).intersection(bounds).area < CGDisplayBounds(second).intersection(bounds).area
         }
-        return best.map { ScreenID(Int($0)) }
+        return best.map(ScreenID.init(display:))
     }
 }
 
