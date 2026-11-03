@@ -10,9 +10,20 @@ final class Orchestrator {
     /// La configuración vigente, de `SwitcherPreferences`; al cambiarla se avisa al núcleo, que la
     /// aplica desde la próxima Switch Session.
     private var config = SwitcherPreferences.load() {
-        didSet { dispatch(.configChanged(config)) }
+        didSet {
+            source.includesOtherSpaces = Self.effective(config).includesOtherSpaces
+            dispatch(.configChanged(Self.effective(config)))
+        }
     }
-    private lazy var core = SwitcherCore(config: config)
+    private lazy var core = SwitcherCore(config: Self.effective(config))
+
+    /// La configuración que ve el núcleo: sin las APIs privadas de `Spaces` (que solo se consultan
+    /// con la opción activada), es como si "Windows de otros Spaces" estuviera desactivada.
+    private static func effective(_ config: SwitcherConfig) -> SwitcherConfig {
+        var effective = config
+        effective.includesOtherSpaces = config.includesOtherSpaces && Spaces.isAvailable
+        return effective
+    }
     /// Thumbnails por Window; el núcleo decide qué capturar y cuándo, ScreenCaptureKit captura.
     private var thumbnails = ThumbnailCache<ThumbnailImage>()
     /// Windows que muestra el Window Switcher ahora.
@@ -48,6 +59,7 @@ final class Orchestrator {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadConfig() }
         }
+        source.includesOtherSpaces = Self.effective(config).includesOtherSpaces
         source.refresh()
 
         let focus = FocusTracker(

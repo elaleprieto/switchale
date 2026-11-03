@@ -16,10 +16,11 @@ struct WindowActivator {
     /// Devuelve false sin tocar nada si la Window o su App ya no existen.
     @discardableResult
     func activate(_ handle: WindowHandle) -> Bool {
-        let element = handle.element
         let app = handle.app
         if app.isSwitchale { return activateOwn(handle.id) }
-        guard !app.isTerminated, axAttribute(element, kAXRoleAttribute) != nil else { return false }
+        if handle.isInOtherSpace { return activateInOtherSpace(handle) }
+        guard let element = handle.element, !app.isTerminated, axAttribute(element, kAXRoleAttribute) != nil
+        else { return false }
         let wasHidden = app.isHidden
         let wasMinimized = axIsMinimized(element)
         if !wasHidden && !wasMinimized {
@@ -40,6 +41,35 @@ struct WindowActivator {
             focus(element, of: app)
         }
         return true
+    }
+
+    /// Una Window de otro Space: `Spaces` pone al frente su App con ella como key, y macOS cambia
+    /// a su Space. Ya en ese Space, AX la lista y se le da foco como a cualquier otra (si AX la
+    /// listaba de antes, con ese elemento). Devuelve false si la App terminó o `Spaces` falló.
+    private func activateInOtherSpace(_ handle: WindowHandle) -> Bool {
+        let app = handle.app
+        guard !app.isTerminated else { return false }
+        if app.isHidden { app.unhide() }
+        guard Spaces.focus(handle.id, pid: app.processIdentifier) else { return false }
+        Task { @MainActor in
+            var element = handle.element
+            await Self.wait {
+                element = element ?? Self.axWindow(handle.id, pid: app.processIdentifier)
+                return element != nil
+            }
+            guard let element, !app.isTerminated else { return }
+            if axIsMinimized(element) {
+                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            }
+            focus(element, of: app)
+        }
+        return true
+    }
+
+    /// El elemento AX de la Window con este id, si AX la lista (ya en su Space).
+    private static func axWindow(_ id: WindowID, pid: pid_t) -> AXUIElement? {
+        let windows = axAttribute(axApplicationElement(pid: pid), kAXWindowsAttribute) as? [AXUIElement] ?? []
+        return windows.first { axWindowID($0) == id }
     }
 
     /// Reintenta cada `pollInterval` hasta que se cumpla la condición o venza el timeout.
