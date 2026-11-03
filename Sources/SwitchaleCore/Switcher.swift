@@ -5,9 +5,16 @@ public struct SwitcherConfig: Sendable, Equatable {
     /// Activation Delay por defecto: 80 ms.
     public var activationDelayMilliseconds: Int
 
-    public init(allWindowsEnabled: Bool = true, activationDelayMilliseconds: Int = 80) {
+    /// Tamaño de las Thumbnails (el slider llega con Preferencias).
+    public var thumbnailSize: ThumbnailSize
+
+    public init(
+        allWindowsEnabled: Bool = true, activationDelayMilliseconds: Int = 80,
+        thumbnailSize: ThumbnailSize = ThumbnailSize()
+    ) {
         self.allWindowsEnabled = allWindowsEnabled
         self.activationDelayMilliseconds = activationDelayMilliseconds
+        self.thumbnailSize = thumbnailSize
     }
 }
 

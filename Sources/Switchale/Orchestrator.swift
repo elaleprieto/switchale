@@ -7,7 +7,12 @@ final class Orchestrator {
     /// Cada cuánto se refresca la foto mientras el Window Switcher está visible.
     private static let switcherRefreshInterval: TimeInterval = 0.5
 
-    private var core = SwitcherCore()
+    private let config = SwitcherConfig()
+    private lazy var core = SwitcherCore(config: config)
+    /// Thumbnails por Window; el núcleo decide qué capturar y cuándo, ScreenCaptureKit captura.
+    private var thumbnails = ThumbnailCache<ThumbnailImage>()
+    /// Windows que muestra el Window Switcher ahora.
+    private var visibleWindows: [WindowID] = []
     private lazy var source = WindowSource { [weak self] snapshot in self?.dispatch(.snapshot(snapshot)) }
     private let activator = WindowActivator()
     private let switcherView = WindowSwitcherView()
@@ -30,6 +35,9 @@ final class Orchestrator {
         if let front = NSWorkspace.shared.frontmostApplication {
             focus.reportFocusedWindow(pid: front.processIdentifier)
         }
+
+        switcherView.thumbnailSize = config.thumbnailSize
+        switcherView.thumbnailProvider = { [weak self] id in self?.thumbnails.image(for: id)?.cgImage }
 
         let tap = EventTap { [weak self] event in self?.dispatch(event) ?? false }
         self.tap = tap
@@ -63,13 +71,18 @@ final class Orchestrator {
                 consume = true
             case .showSwitcher(let content):
                 switcherView.show(content)
+                visibleWindows = content.items.map(\.windowID)
+                requestThumbnails()
                 startSwitcherRefresh()
             case .updateSwitcher(let content):
                 switcherView.update(content)
+                visibleWindows = content.items.map(\.windowID)
+                requestThumbnails()
             case .selectItem(let index):
                 switcherView.select(index)
             case .hideSwitcher:
                 switcherView.hide()
+                visibleWindows = []
                 switcherRefreshTimer?.invalidate()
                 switcherRefreshTimer = nil
             }
@@ -80,7 +93,34 @@ final class Orchestrator {
     private func startSwitcherRefresh() {
         switcherRefreshTimer?.invalidate()
         switcherRefreshTimer = Timer.scheduledTimer(withTimeInterval: Self.switcherRefreshInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.source.refresh() }
+            MainActor.assumeIsolated {
+                self?.source.refresh()
+                self?.requestThumbnails()
+            }
+        }
+    }
+
+    /// Pide las capturas que el núcleo considera necesarias. El panel ya está en pantalla: cada
+    /// Thumbnail se completa cuando llega, sin tocar el resto de la grilla.
+    private func requestThumbnails() {
+        thumbnails.prune(keeping: Set(source.handles.keys))
+        let now = ProcessInfo.processInfo.systemUptime
+        let screenRecording = SystemPermissions.current().screenRecording
+        if !screenRecording { thumbnails.removeAll() }
+        let size = config.thumbnailSize
+        let toCapture = thumbnails.windowsToCapture(
+            among: visibleWindows, size: size, now: now, screenRecording: screenRecording
+        )
+        toCapture.forEach { thumbnails.markCapturing($0) }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        ThumbnailSource.capture(toCapture, size: size, scale: scale) { [weak self] id, image in
+            guard let self else { return }
+            if let image {
+                thumbnails.store(image, for: id, size: size, at: ProcessInfo.processInfo.systemUptime)
+                switcherView.thumbnailChanged(for: id)
+            } else {
+                thumbnails.captureFailed(id)
+            }
         }
     }
 }

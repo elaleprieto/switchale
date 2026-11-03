@@ -9,6 +9,15 @@ final class WindowSwitcherView {
     private let panel: NSPanel
     private let background = NSVisualEffectView()
     private var cells: [SwitcherCell] = []
+    private var windowIDs: [WindowID] = []
+    /// Tamaño de las Thumbnails, de la configuración.
+    var thumbnailSize = ThumbnailSize() {
+        didSet { cellSize = Metrics.cellSize(for: thumbnailSize) }
+    }
+    private var cellSize = Metrics.cellSize(for: ThumbnailSize())
+    /// La Thumbnail ya capturada de una Window, si hay. Se consulta al armar la grilla, así un
+    /// cambio de contenido no deja las celdas sin imagen.
+    var thumbnailProvider: (WindowID) -> CGImage? = { _ in nil }
 
     init() {
         panel = NSPanel(
@@ -46,6 +55,12 @@ final class WindowSwitcherView {
         layout(content)
     }
 
+    /// Una Thumbnail nueva o refrescada: se cambia solo la imagen de esa celda.
+    func thumbnailChanged(for window: WindowID) {
+        guard let index = windowIDs.firstIndex(of: window) else { return }
+        cells[index].thumbnail = thumbnailProvider(window)
+    }
+
     func select(_ index: Int) {
         for (offset, cell) in cells.enumerated() { cell.isSelected = offset == index }
     }
@@ -61,7 +76,7 @@ final class WindowSwitcherView {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-        let cell = Metrics.cellSize
+        let cell = cellSize
         let available = visible.width * Metrics.maxWidthFraction - 2 * Metrics.padding
         let fitting = Int((available + Metrics.spacing) / (cell.width + Metrics.spacing))
         let columns = max(1, min(items.count, fitting))
@@ -72,6 +87,7 @@ final class WindowSwitcherView {
         let size = NSSize(width: gridWidth + 2 * Metrics.padding, height: gridHeight + 2 * Metrics.padding)
 
         cells.forEach { $0.removeFromSuperview() }
+        windowIDs = items.map(\.windowID)
         cells = items.enumerated().map { index, item in
             let row = index / columns
             let column = index % columns
@@ -83,6 +99,7 @@ final class WindowSwitcherView {
 
             let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
             view.configure(title: item.title, icon: Self.icon(for: item.appID))
+            view.thumbnail = thumbnailProvider(item.windowID)
             view.isSelected = index == content.selected
             background.addSubview(view)
             return view
@@ -99,8 +116,18 @@ final class WindowSwitcherView {
 
 /// Medidas del Window Switcher y de sus celdas, en puntos.
 private enum Metrics {
-    static let cellSize = NSSize(width: 132, height: 124)
+    /// La celda envuelve la Thumbnail con su margen y deja lugar al título debajo.
+    static func cellSize(for thumbnail: ThumbnailSize) -> NSSize {
+        NSSize(
+            width: CGFloat(thumbnail.width) + 2 * cellInset,
+            height: CGFloat(thumbnail.height) + 2 * cellInset + titleHeight + titleBottomOffset
+        )
+    }
+    /// Ícono grande: lo único que hay en la celda mientras no llega la Thumbnail.
     static let iconSize: CGFloat = 72
+    /// Ícono chico: encima de la Thumbnail, en su esquina inferior izquierda.
+    static let badgeIconSize: CGFloat = 32
+    static let thumbnailCornerRadius: CGFloat = 6
     static let spacing: CGFloat = 8
     static let padding: CGFloat = 20
     static let cornerRadius: CGFloat = 18
@@ -118,13 +145,26 @@ private enum Metrics {
     static let selectionFillAlpha: CGFloat = 0.3
 }
 
-/// Una celda de la grilla: el ícono de la App y, debajo, el título de la Window.
+/// Una celda de la grilla: la Thumbnail de la Window con el ícono de la App encima y, debajo,
+/// el título. Mientras no hay Thumbnail muestra solo el ícono grande y el título.
 private final class SwitcherCell: NSView {
+    private let thumbnailView = NSImageView()
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    private var thumbnailArea = NSRect.zero
 
     var isSelected = false {
         didSet { needsDisplay = true }
+    }
+
+    /// Reemplaza la imagen sin pasar por vacío: una Thumbnail refrescada no parpadea.
+    var thumbnail: CGImage? {
+        didSet {
+            guard thumbnail !== oldValue else { return }
+            thumbnailView.image = thumbnail.map { NSImage(cgImage: $0, size: .zero) }
+            thumbnailView.isHidden = thumbnail == nil
+            layoutIcon()
+        }
     }
 
     override init(frame: NSRect) {
@@ -133,17 +173,7 @@ private final class SwitcherCell: NSView {
         layer?.cornerRadius = Metrics.cellCornerRadius
         layer?.borderWidth = Metrics.selectionBorderWidth
 
-        let iconSize = Metrics.iconSize
         let inset = Metrics.cellInset
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.frame = NSRect(
-            x: (frame.width - iconSize) / 2,
-            y: frame.height - inset - iconSize,
-            width: iconSize,
-            height: iconSize
-        )
-        addSubview(iconView)
-
         label.alignment = .center
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
@@ -155,7 +185,21 @@ private final class SwitcherCell: NSView {
             width: frame.width - 2 * inset,
             height: Metrics.titleHeight
         )
+
+        let titleTop = label.frame.maxY
+        thumbnailArea = NSRect(x: inset, y: titleTop, width: frame.width - 2 * inset, height: frame.height - inset - titleTop)
+        thumbnailView.frame = thumbnailArea
+        thumbnailView.imageScaling = .scaleProportionallyUpOrDown
+        thumbnailView.wantsLayer = true
+        thumbnailView.layer?.cornerRadius = Metrics.thumbnailCornerRadius
+        thumbnailView.layer?.masksToBounds = true
+        thumbnailView.isHidden = true
+
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        addSubview(thumbnailView)
+        addSubview(iconView)
         addSubview(label)
+        layoutIcon()
     }
 
     @available(*, unavailable)
@@ -165,6 +209,18 @@ private final class SwitcherCell: NSView {
         label.stringValue = title
         label.toolTip = title
         iconView.image = icon
+    }
+
+    private func layoutIcon() {
+        if thumbnail == nil {
+            let size = Metrics.iconSize
+            iconView.frame = NSRect(
+                x: thumbnailArea.midX - size / 2, y: thumbnailArea.midY - size / 2, width: size, height: size
+            )
+        } else {
+            let size = Metrics.badgeIconSize
+            iconView.frame = NSRect(x: thumbnailArea.minX + 4, y: thumbnailArea.minY + 4, width: size, height: size)
+        }
     }
 
     override var wantsUpdateLayer: Bool { true }
