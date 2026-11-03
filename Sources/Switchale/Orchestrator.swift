@@ -1,78 +1,67 @@
 import AppKit
 import SwitchaleCore
 
-/// Recibe eventos de los adaptadores, los pasa al núcleo y despacha los efectos.
+/// Recibe eventos de los adaptadores, los pasa al núcleo y despacha todos sus efectos.
 @MainActor
 final class Orchestrator {
-    /// Activation Delay por defecto (la configurabilidad llega en otro ticket).
-    private static let activationDelay: TimeInterval = 0.080
-
     private var core = SwitcherCore()
     private let source = WindowSource()
     private let activator = WindowActivator()
-    private var timer: Timer?
+    private var activationTimer: Timer?
     private var tap: EventTap?
     private var focus: FocusTracker?
 
     func start() {
-        _ = core.send(.snapshot(source.snapshot()))
+        refreshSnapshot()
 
-        let focus = FocusTracker { [weak self] id in self?.windowFocused(id) }
+        let focus = FocusTracker(
+            onFocus: { [weak self] id in self?.dispatch(.windowFocused(id)) },
+            onAppsChanged: { [weak self] in self?.refreshSnapshot() }
+        )
         self.focus = focus
         focus.start()
         if let front = NSWorkspace.shared.frontmostApplication {
             focus.reportFocusedWindow(pid: front.processIdentifier)
         }
 
-        let tap = EventTap(
-            onHotkey: { [weak self] scope, isRepeat in
-                self?.hotkeyPressed(scope, isRepeat: isRepeat) ?? HotkeyResult(consume: false, sessionStarted: false)
-            },
-            onModifierReleased: { [weak self] in self?.dispatch(.modifierReleased) }
-        )
+        let tap = EventTap { [weak self] event in self?.dispatch(event) ?? false }
         self.tap = tap
         tap.start()
     }
 
-    private func windowFocused(_ id: Int) {
-        // Una Window nueva puede no estar aún en la foto.
-        _ = core.send(.windowFocused(id))
+    private func refreshSnapshot() {
+        dispatch(.snapshot(source.snapshot()))
     }
 
-    private func hotkeyPressed(_ scope: Scope, isRepeat: Bool) -> HotkeyResult {
-        if !isRepeat {
-            // Foto fresca para que cerradas y nuevas se reflejen antes de decidir.
-            _ = core.send(.snapshot(source.snapshot()))
-        }
-        let effects = dispatch(.hotkeyPressed(scope))
-        return HotkeyResult(
-            consume: !effects.contains(.passEventToSystem),
-            sessionStarted: effects.contains(.startActivationTimer)
-        )
-    }
-
+    /// Envía el evento al núcleo y ejecuta todos sus efectos. Devuelve true si el evento de teclado
+    /// que lo originó debe consumirse.
     @discardableResult
-    private func dispatch(_ event: SwitcherEvent) -> [SwitcherEffect] {
-        let effects = core.send(event)
-        for effect in effects {
+    private func dispatch(_ event: SwitcherEvent) -> Bool {
+        var consume = false
+        for effect in core.send(event) {
             switch effect {
-            case .startActivationTimer:
-                timer?.invalidate()
-                timer = Timer.scheduledTimer(withTimeInterval: Self.activationDelay, repeats: false) { [weak self] _ in
+            case .startActivationTimer(let milliseconds):
+                activationTimer?.invalidate()
+                activationTimer = Timer.scheduledTimer(withTimeInterval: Double(milliseconds) / 1000, repeats: false) { [weak self] _ in
                     MainActor.assumeIsolated { self?.dispatch(.activationDelayElapsed) }
                 }
             case .cancelActivationTimer:
-                timer?.invalidate()
-                timer = nil
+                activationTimer?.invalidate()
+                activationTimer = nil
             case .activate(let id):
-                if let window = source.live[id] {
-                    activator.activate(window)
-                    _ = core.send(.windowFocused(id))
+                if let handle = source.handles[id] {
+                    activator.activate(handle)
+                    dispatch(.windowFocused(id))
                 }
-            case .passEventToSystem:
-                break // Lo resuelve el event tap según el valor de retorno.
+            case .refreshSnapshot:
+                // Fuera del callback del tap: la foto completa es lenta y el tap tiene timeout.
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated { self?.refreshSnapshot() }
+                }
+            case .consumeEvent:
+                consume = true
             }
         }
-        return effects
+        return consume
     }
 }

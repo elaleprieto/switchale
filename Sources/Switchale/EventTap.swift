@@ -2,33 +2,18 @@ import AppKit
 import ApplicationServices
 import SwitchaleCore
 
-/// Resultado de entregar un Hotkey al orquestador.
-struct HotkeyResult {
-    /// Consumir el evento original (false = dejarlo pasar al sistema).
-    var consume: Bool
-    /// Se abrió una Switch Session (hay que seguir el modificador).
-    var sessionStarted: Bool
-}
-
-/// `CGEventTap` que reconoce los Hotkeys y el soltado del modificador.
+/// `CGEventTap` que traduce teclas y modificadores a eventos del núcleo.
+/// Solo aplica la decisión de consumir que devuelve el núcleo; no tiene lógica de sesión.
 /// Necesita Accesibilidad: sin ella no se instala y ⌘⇥ sigue siendo el nativo.
 @MainActor
 final class EventTap {
-    private static let relevantFlags: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
-    // Hotkeys por defecto (la configurabilidad llega en otro ticket).
-    private static let tabKey: Int64 = 48
-    private static let backtickKey: Int64 = 50
-
-    private let onHotkey: (Scope, Bool) -> HotkeyResult
-    private let onModifierReleased: () -> Void
+    /// Entrega un evento al núcleo y devuelve true si hay que consumir el evento de teclado.
+    private let onEvent: (SwitcherEvent) -> Bool
     private var port: CFMachPort?
     private var retryTimer: Timer?
-    private var heldModifier: CGEventFlags?
-    private var heldKey: Int64?
 
-    init(onHotkey: @escaping (Scope, Bool) -> HotkeyResult, onModifierReleased: @escaping () -> Void) {
-        self.onHotkey = onHotkey
-        self.onModifierReleased = onModifierReleased
+    init(onEvent: @escaping (SwitcherEvent) -> Bool) {
+        self.onEvent = onEvent
     }
 
     /// Instala el tap; si falta Accesibilidad, reintenta cada 2 s hasta que se otorgue.
@@ -59,64 +44,61 @@ final class EventTap {
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: port, enable: true)
+        syncModifiers()
         return true
     }
 
-    /// Devuelve true si hay que consumir el evento.
-    fileprivate func handle(type: CGEventType, keyCode: Int64, flags: CGEventFlags, isRepeat: Bool) -> Bool {
+    /// Relee los modificadores reales: si el tap estuvo caído y se perdió el soltado, el núcleo cierra la sesión.
+    private func syncModifiers() {
+        _ = onEvent(.modifiersChanged(modifiers(CGEventSource.flagsState(.combinedSessionState))))
+    }
+
+    /// Devuelve true si hay que consumir el evento. `translated` es nil para tipos que no interesan.
+    fileprivate func handle(type: CGEventType, translated: SwitcherEvent?) -> Bool {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let port { CGEvent.tapEnable(tap: port, enable: true) }
+            syncModifiers()
             return false
-
-        case .keyDown:
-            let mods = flags.intersection(Self.relevantFlags)
-            let scope: Scope
-            let modifier: CGEventFlags
-            if keyCode == Self.tabKey && mods == .maskCommand {
-                scope = .allWindows; modifier = .maskCommand
-            } else if keyCode == Self.backtickKey && mods == .maskAlternate {
-                scope = .currentApp; modifier = .maskAlternate
-            } else {
-                return false
-            }
-            let result = onHotkey(scope, isRepeat)
-            if result.sessionStarted {
-                heldModifier = modifier
-                heldKey = keyCode
-            }
-            return result.consume
-
-        case .keyUp:
-            return heldKey == keyCode
-
-        case .flagsChanged:
-            if let held = heldModifier, !flags.contains(held) {
-                heldModifier = nil
-                heldKey = nil
-                onModifierReleased()
-            }
-            return false
-
         default:
-            return false
+            return translated.map(onEvent) ?? false
         }
     }
+}
+
+private func translate(_ type: CGEventType, _ event: CGEvent) -> SwitcherEvent? {
+    func keyCode() -> KeyCode { KeyCode(Int(event.getIntegerValueField(.keyboardEventKeycode))) }
+    switch type {
+    case .keyDown:
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        return .keyDown(keyCode(), modifiers(event.flags), isRepeat: isRepeat)
+    case .keyUp:
+        return .keyUp(keyCode())
+    case .flagsChanged:
+        return .modifiersChanged(modifiers(event.flags))
+    default:
+        return nil
+    }
+}
+
+private func modifiers(_ flags: CGEventFlags) -> Modifiers {
+    var result: Modifiers = []
+    if flags.contains(.maskCommand) { result.insert(.command) }
+    if flags.contains(.maskShift) { result.insert(.shift) }
+    if flags.contains(.maskAlternate) { result.insert(.option) }
+    if flags.contains(.maskControl) { result.insert(.control) }
+    return result
 }
 
 private func eventTapCallback(
     _ proxy: CGEventTapProxy,
     _ type: CGEventType,
     _ event: CGEvent,
-    _ refcon: UnsafeMutableRawPointer?
+    _ context: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
-    guard let refcon else { return Unmanaged.passUnretained(event) }
-    let tap = Unmanaged<EventTap>.fromOpaque(refcon).takeUnretainedValue()
-    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-    let flags = event.flags
-    let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-    let consume = MainActor.assumeIsolated {
-        tap.handle(type: type, keyCode: keyCode, flags: flags, isRepeat: isRepeat)
-    }
+    guard let context else { return Unmanaged.passUnretained(event) }
+    let tap = Unmanaged<EventTap>.fromOpaque(context).takeUnretainedValue()
+    let translated = translate(type, event)
+    let consume = MainActor.assumeIsolated { tap.handle(type: type, translated: translated) }
     return consume ? nil : Unmanaged.passUnretained(event)
 }
