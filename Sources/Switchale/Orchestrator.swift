@@ -26,12 +26,13 @@ final class Orchestrator {
 
         let focus = FocusTracker(
             onFocus: { [weak self] id in self?.dispatch(.windowFocused(id)) },
+            onAppActivated: { [weak self] app in self?.dispatch(.appActivated(app)) },
             onAppsChanged: { [weak self] in self?.source.refresh() }
         )
         self.focus = focus
         focus.start()
         if let front = NSWorkspace.shared.frontmostApplication {
-            focus.reportFocusedWindow(pid: front.processIdentifier)
+            focus.reportActivation(of: front)
         }
 
         let tap = EventTap { [weak self] event in self?.dispatch(event) ?? false }

@@ -21,6 +21,8 @@ public struct KeyCode: Sendable, Hashable {
 
     /// ⇥ (kVK_Tab).
     public static let tab = KeyCode(48)
+    /// ` (kVK_ANSI_Grave).
+    public static let grave = KeyCode(50)
     /// Esc (kVK_Escape).
     public static let escape = KeyCode(53)
     /// ← (kVK_LeftArrow).
@@ -41,6 +43,26 @@ public struct Modifiers: OptionSet, Sendable {
     public static let shift = Modifiers(rawValue: 1 << 1)
     public static let option = Modifiers(rawValue: 1 << 2)
     public static let control = Modifiers(rawValue: 1 << 3)
+}
+
+/// Un modificador y una tecla que abren la Switch Session de un Scope.
+public struct Hotkey: Sendable, Equatable {
+    public var modifier: Modifiers
+    public var key: KeyCode
+    /// Si el Hotkey con ⇧ también vale (para retroceder). Si no, con ⇧ pasa al sistema.
+    public var reversesWithShift: Bool
+
+    public init(modifier: Modifiers, key: KeyCode, reversesWithShift: Bool) {
+        self.modifier = modifier
+        self.key = key
+        self.reversesWithShift = reversesWithShift
+    }
+
+    /// La tecla con el modificador, y ⇧ si el Hotkey retrocede con ⇧; ningún otro modificador.
+    func matches(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
+        let allowed: Modifiers = reversesWithShift ? [modifier, .shift] : modifier
+        return key == self.key && modifiers.contains(modifier) && modifiers.subtracting(allowed).isEmpty
+    }
 }
 
 /// Una App en ejecución.

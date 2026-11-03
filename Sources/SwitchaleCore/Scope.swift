@@ -6,4 +6,13 @@ public enum Scope: Sendable, CaseIterable {
     case allWindows
     /// Solo las Windows de la App activa.
     case currentApp
+
+    /// El Hotkey del Scope: ⌘⇥ para All Windows (⌘⇧⇥ retrocede), ⌥` para Current App (sin
+    /// retroceso: ⌥⇧` pasa al sistema).
+    public var hotkey: Hotkey {
+        switch self {
+        case .allWindows: Hotkey(modifier: .command, key: .tab, reversesWithShift: true)
+        case .currentApp: Hotkey(modifier: .option, key: .grave, reversesWithShift: false)
+        }
+    }
 }

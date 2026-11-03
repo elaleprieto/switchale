@@ -4,6 +4,7 @@ import SwitchaleCore
 
 /// Lo necesario para activar una Window conocida en la última foto.
 struct WindowHandle {
+    let id: WindowID
     let element: AXUIElement
     let app: NSRunningApplication
 }
@@ -37,7 +38,7 @@ final class WindowSource {
         isCapturing = true
         // Lo de AppKit (pantalla actual, Apps en ejecución) se lee acá, en el main thread.
         let input = CaptureInput(
-            apps: NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated },
+            apps: NSWorkspace.shared.runningApplications.filter { $0.listsWindowsInSwitcher && !$0.isTerminated },
             currentScreen: Self.currentScreen()
         )
         queue.async { [weak self] in
@@ -108,7 +109,7 @@ final class WindowSource {
                     isAppHidden: app.isHidden,
                     stackIndex: entry.stackIndex
                 ))
-                newHandles[id] = WindowHandle(element: element, app: app)
+                newHandles[id] = WindowHandle(id: id, element: element, app: app)
             }
         }
         return Capture(
