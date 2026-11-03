@@ -10,7 +10,10 @@ final class Orchestrator {
     private var core = SwitcherCore()
     private lazy var source = WindowSource { [weak self] snapshot in self?.dispatch(.snapshot(snapshot)) }
     private let activator = WindowActivator()
-    private let switcherView = WindowSwitcherView()
+    private lazy var switcherView = WindowSwitcherView(
+        onClick: { [weak self] id in self?.dispatch(.windowClicked(id)) },
+        onColumnsChanged: { [weak self] columns in self?.dispatch(.switcherColumnsChanged(columns)) }
+    )
     private var activationTimer: Timer?
     /// Mientras el Window Switcher está visible se refresca la foto, para que las Windows que se
     /// cierran salgan de la grilla.
