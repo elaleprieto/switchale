@@ -89,7 +89,7 @@ public struct SwitcherState: Sendable {
         /// Windows de la Switch Session, en Recency Order.
         var windows: [WindowID]
         var selected: Int
-        /// La Switch Session arrancó con el Hotkey del Scope con ⇧.
+        /// La Switch Session arrancó con el Hotkey del Scope con ⇧ (solo si el Scope retrocede con ⇧).
         let startsBackwards: Bool
 
         init(scope: Scope, windows: [WindowID], startsBackwards: Bool) {
@@ -102,7 +102,7 @@ public struct SwitcherState: Sendable {
         var isSwitcherVisible: Bool { shown != nil }
 
         /// Con el Hotkey del Scope, el segundo ítem en Recency Order (un Quick Switch); con el
-        /// Hotkey del Scope con ⇧, el último. Si hay uno solo, ese.
+        /// Hotkey del Scope con ⇧ (si el Scope retrocede con ⇧), el último. Si hay uno solo, ese.
         private static func initialSelection(_ windows: [WindowID], backwards: Bool) -> Int {
             if backwards { return max(0, windows.count - 1) }
             return windows.count >= 2 ? 1 : 0
@@ -177,7 +177,8 @@ public struct SwitcherCore: Sendable {
             return (next, [.consumeEvent] + session.closingEffects)
 
         case .keyDown(let key, let modifiers, let isRepeat):
-            // Dentro de una Switch Session, el Hotkey de su Scope (con o sin ⇧) mueve la selección.
+            // Dentro de una Switch Session, el Hotkey de su Scope mueve la selección (con ⇧ retrocede, si
+            // el Scope lo admite).
             if var session = next.session {
                 guard session.scope.hotkey.matches(key, modifiers) else { return (next, []) }
                 next.heldKeys.insert(key)

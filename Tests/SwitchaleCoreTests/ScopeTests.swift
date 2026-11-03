@@ -63,11 +63,16 @@ struct CurrentAppScopeTests {
         #expect(c.send(.modifiersChanged([])) == [])
     }
 
-    @Test("⌥⇧` retrocede: un toque rápido activa la última Window de la App activa")
-    func backwards() {
+    @Test("⌥⇧` pasa al sistema, fuera y dentro de una Switch Session de Current App")
+    func shiftGravePassesThrough() {
         var c = core([win(1, app: 1, stack: 0), win(2, app: 1, stack: 1), win(3, app: 1, stack: 2), win(4, app: 2, stack: 3)], activeApp: 1)
-        _ = c.send(.keyDown(.grave, [.option, .shift], isRepeat: false))
-        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(3))])
+        #expect(c.send(.keyDown(.grave, [.option, .shift], isRepeat: false)) == [])
+        #expect(c.send(.keyUp(.grave)) == [])
+        #expect(c.send(.modifiersChanged([])) == [])
+        _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
+        _ = c.send(.activationDelayElapsed)
+        #expect(c.send(.keyDown(.grave, [.option, .shift], isRepeat: false)) == [])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
     }
 
     @Test("La Switch Session de ⌥` termina al soltar ⌥, no ⌘")

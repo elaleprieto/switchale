@@ -41,15 +41,19 @@ public struct Modifiers: OptionSet, Sendable {
 public struct Hotkey: Sendable, Equatable {
     public var modifier: Modifiers
     public var key: KeyCode
+    /// Si el Hotkey con ⇧ también vale (para retroceder). Si no, con ⇧ pasa al sistema.
+    public var reversesWithShift: Bool
 
-    public init(modifier: Modifiers, key: KeyCode) {
+    public init(modifier: Modifiers, key: KeyCode, reversesWithShift: Bool) {
         self.modifier = modifier
         self.key = key
+        self.reversesWithShift = reversesWithShift
     }
 
-    /// La tecla con el modificador, y opcionalmente ⇧ (para retroceder); ningún otro modificador.
+    /// La tecla con el modificador, y ⇧ si el Hotkey retrocede con ⇧; ningún otro modificador.
     func matches(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
-        key == self.key && modifiers.contains(modifier) && modifiers.subtracting([modifier, .shift]).isEmpty
+        let allowed: Modifiers = reversesWithShift ? [modifier, .shift] : modifier
+        return key == self.key && modifiers.contains(modifier) && modifiers.subtracting(allowed).isEmpty
     }
 }
 
