@@ -93,7 +93,7 @@ final class WindowSwitcherView {
     }
 
     private static func icon(for app: AppID) -> NSImage? {
-        NSRunningApplication(processIdentifier: pid_t(app.rawValue))?.icon
+        NSRunningApplication(processIdentifier: app.pid)?.icon
     }
 }
 

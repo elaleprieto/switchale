@@ -58,8 +58,8 @@ final class Orchestrator {
                     dispatch(.activationFailed(id))
                 }
             case .activateApp(let app):
-                if !activator.activateApp(pid: pid_t(app.rawValue)) {
-                    dispatch(.appActivationFailed(app))
+                activator.activateApp(pid: app.pid) { [weak self] succeeded in
+                    if !succeeded { self?.dispatch(.appActivationFailed(app)) }
                 }
             case .refreshSnapshot:
                 source.refresh()

@@ -73,7 +73,7 @@ final class WindowSource {
     }
 
     private nonisolated static func capture(_ input: CaptureInput) -> Capture {
-        let (cgInfo, onScreenIDs, pidsWithNormalWindows) = cgWindowInfo()
+        let cg = cgWindowInfo()
         let currentScreen = input.currentScreen
 
         var windows: [Window] = []
@@ -82,23 +82,16 @@ final class WindowSource {
         var newHandles: [WindowID: WindowHandle] = [:]
 
         for app in input.apps {
-            let appID = AppID(Int(app.processIdentifier))
+            let appID = AppID(pid: app.processIdentifier)
             apps.append(AppInfo(id: appID, name: app.localizedName ?? ""))
             let appElement = axApplicationElement(pid: app.processIdentifier)
             let axWindows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] ?? []
-            let windowCount = windows.count
-            defer {
-                // Windowless: sin Windows nuestras y sin ventanas normales en CoreGraphics (que sí
-                // ve las de otros Spaces, que AX no lista).
-                if windows.count == windowCount, !pidsWithNormalWindows.contains(app.processIdentifier) {
-                    windowlessApps.append(appID)
-                }
-            }
+            var hasWindows = false
 
             for element in axWindows {
                 // Si el id no está en CGWindowList (o no es de la capa normal), no es una Window.
                 guard let id = axWindowID(element),
-                      let entry = cgInfo[id],
+                      let entry = cg.entries[id],
                       entry.layer == 0,
                       isStandardWindow(element)
                 else { continue }
@@ -106,7 +99,7 @@ final class WindowSource {
                 let isMinimized = axIsMinimized(element)
                 // AX solo lista las Windows del Space actual (y las Minimized); lo que no está en
                 // pantalla ni minimizado ni de una App oculta no se puede ubicar en el Space actual.
-                let isInCurrentSpace = onScreenIDs.contains(id) || isMinimized || app.isHidden
+                let isInCurrentSpace = cg.onScreenIDs.contains(id) || isMinimized || app.isHidden
                 windows.append(Window(
                     id: id,
                     appID: appID,
@@ -118,6 +111,12 @@ final class WindowSource {
                     stackIndex: entry.stackIndex
                 ))
                 newHandles[id] = WindowHandle(element: element, app: app)
+                hasWindows = true
+            }
+            // Windowless: sin Windows nuestras y sin ventanas normales en CoreGraphics (que sí ve
+            // las de otros Spaces, que AX no lista).
+            if !hasWindows, !cg.pidsWithNormalWindows.contains(app.processIdentifier) {
+                windowlessApps.append(appID)
             }
         }
         return Capture(
@@ -134,7 +133,25 @@ final class WindowSource {
         let bounds: CGRect
     }
 
-    private nonisolated static func cgWindowInfo() -> ([WindowID: CGEntry], Set<WindowID>, Set<pid_t>) {
+    private struct CGInfo {
+        let entries: [WindowID: CGEntry]
+        let onScreenIDs: Set<WindowID>
+        /// Dueños de al menos una ventana normal (ver `isNormalCGWindow`).
+        let pidsWithNormalWindows: Set<pid_t>
+    }
+
+    /// Tamaño mínimo (ancho y alto) de una ventana para contar como Window.
+    private nonisolated static let minimumWindowSize: CGFloat = 100
+
+    /// Ventana normal en CoreGraphics: capa 0, de tamaño mínimo y visible (alpha > 0). `.optionAll`
+    /// también lista ventanas que la App sacó de pantalla (orderOut) sin cerrarlas; ésas no cuentan,
+    /// si no una App sin Windows reales (p. ej. Finder) nunca sería Windowless. Las ventanas de
+    /// otros Spaces siguen contando: no están en pantalla pero son reales, y AX no las lista.
+    private nonisolated static func isNormalCGWindow(layer: Int, bounds: CGRect, alpha: Double) -> Bool {
+        layer == 0 && bounds.width >= minimumWindowSize && bounds.height >= minimumWindowSize && alpha > 0
+    }
+
+    private nonisolated static func cgWindowInfo() -> CGInfo {
         let all = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         var entries: [WindowID: CGEntry] = [:]
@@ -147,13 +164,14 @@ final class WindowSource {
             }
             let layer = info[kCGWindowLayer as String] as? Int ?? 0
             entries[WindowID(Int(number))] = CGEntry(layer: layer, stackIndex: index, bounds: bounds)
-            if layer == 0, bounds.width >= 100, bounds.height >= 100,
+            let alpha = info[kCGWindowAlpha as String] as? Double ?? 1
+            if isNormalCGWindow(layer: layer, bounds: bounds, alpha: alpha),
                let pid = info[kCGWindowOwnerPID as String] as? pid_t {
                 pidsWithNormalWindows.insert(pid)
             }
         }
         let onScreenIDs = Set(onScreen.compactMap { ($0[kCGWindowNumber as String] as? CGWindowID).map { WindowID(Int($0)) } })
-        return (entries, onScreenIDs, pidsWithNormalWindows)
+        return CGInfo(entries: entries, onScreenIDs: onScreenIDs, pidsWithNormalWindows: pidsWithNormalWindows)
     }
 
     /// Solo subrol estándar o diálogo, de al menos 100×100.
@@ -164,7 +182,7 @@ final class WindowSource {
         if let value = axAttribute(element, kAXSizeAttribute), CFGetTypeID(value) == AXValueGetTypeID() {
             AXValueGetValue(value as! AXValue, .cgSize, &size)
         }
-        return size.width >= 100 && size.height >= 100
+        return size.width >= minimumWindowSize && size.height >= minimumWindowSize
     }
 
     // MARK: - Pantallas

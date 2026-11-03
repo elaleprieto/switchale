@@ -30,17 +30,22 @@ struct WindowActivator {
     }
 
     /// Activa una Windowless App como el clic en su ícono del Dock: `openApplication` sobre una App
-    /// ya en ejecución dispara el reopen, que normalmente abre su ventana por defecto.
-    /// Devuelve false si la App ya no existe.
-    @discardableResult
-    func activateApp(pid: pid_t) -> Bool {
+    /// ya en ejecución dispara el reopen (que también la muestra si estaba Hidden), que normalmente
+    /// abre su ventana por defecto. `completion` recibe false, en el main thread, si la App ya no
+    /// existe o el sistema no pudo abrirla.
+    func activateApp(pid: pid_t, completion: @escaping @MainActor (Bool) -> Void) {
         guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated,
               let url = app.bundleURL
-        else { return false }
-        if app.isHidden { app.unhide() }
+        else {
+            completion(false)
+            return
+        }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: configuration)
-        return true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { completion(error == nil) }
+            }
+        }
     }
 }
