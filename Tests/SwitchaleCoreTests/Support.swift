@@ -1,4 +1,4 @@
-import SwitchaleCore
+@testable import SwitchaleCore
 
 let mainScreen = ScreenID(1)
 let otherScreen = ScreenID(2)
@@ -13,11 +13,14 @@ func win(
     )
 }
 
-func snapshot(_ windows: [Window]) -> Snapshot {
+func snapshot(
+    _ windows: [Window], focused: Int? = nil, mouse: ScreenID = mainScreen, primary: ScreenID = mainScreen
+) -> Snapshot {
     Snapshot(
         windows: windows,
         apps: Set(windows.map(\.appID)).map { AppInfo(id: $0, name: "app\($0.rawValue)") },
-        currentScreen: mainScreen
+        focusedWindow: focused.map(WindowID.init),
+        screens: Screens(mouse: mouse, primary: primary)
     )
 }
 
@@ -44,3 +47,8 @@ func quickSwitchTarget(_ core: inout SwitcherCore) -> WindowID? {
 
 /// Config "solo Windows visibles": sin Minimized Windows ni Windows de Hidden Apps.
 let visibleOnly = SwitcherConfig(includesMinimizedWindows: false, includesHiddenApps: false)
+
+/// La foto que pide la Switch Session al arrancar, con las mismas Windows que la anterior.
+func deliverFreshSnapshot(_ core: inout SwitcherCore) {
+    _ = core.send(.snapshot(core.state.snapshot))
+}

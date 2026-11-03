@@ -1,5 +1,15 @@
 // Núcleo del switcher: función (estado, evento) → (estado, [efecto]).
 
+/// En qué pantalla aparece el Window Switcher.
+public enum PanelScreen: String, Sendable, Equatable {
+    /// La pantalla de la Window con foco (por defecto).
+    case focusedWindow
+    /// La pantalla donde está el mouse.
+    case mouse
+    /// La pantalla principal del sistema.
+    case primary
+}
+
 public struct SwitcherConfig: Sendable, Equatable {
     /// Los Scopes activados. Un Scope desactivado no abre Switch Sessions: su Hotkey hace lo que
     /// hace en macOS.
@@ -8,16 +18,22 @@ public struct SwitcherConfig: Sendable, Equatable {
     public var includesMinimizedWindows: Bool
     /// Incluir las Windows de Hidden Apps (por defecto sí).
     public var includesHiddenApps: Bool
+    /// Incluir las Windows de otras pantallas (por defecto sí).
+    public var includesOtherScreens: Bool
+    public var panelScreen: PanelScreen
     /// Activation Delay por defecto: 80 ms.
     public var activationDelayMilliseconds: Int
 
     public init(
         enabledScopes: Set<Scope> = Set(Scope.allCases), includesMinimizedWindows: Bool = true,
-        includesHiddenApps: Bool = true, activationDelayMilliseconds: Int = 80
+        includesHiddenApps: Bool = true, includesOtherScreens: Bool = true,
+        panelScreen: PanelScreen = .focusedWindow, activationDelayMilliseconds: Int = 80
     ) {
         self.enabledScopes = enabledScopes
         self.includesMinimizedWindows = includesMinimizedWindows
         self.includesHiddenApps = includesHiddenApps
+        self.includesOtherScreens = includesOtherScreens
+        self.panelScreen = panelScreen
         self.activationDelayMilliseconds = activationDelayMilliseconds
     }
 }
@@ -59,14 +75,16 @@ public enum SwitcherEffect: Sendable, Equatable {
     case hideSwitcher
 }
 
-/// Lo que muestra el Window Switcher: sus ítems y el índice seleccionado.
+/// Lo que muestra el Window Switcher: sus ítems, el índice seleccionado y la pantalla donde aparece.
 public struct SwitcherContent: Sendable, Equatable {
     public var items: [SwitcherItem]
     public var selected: Int
+    public var screen: ScreenID
 
-    public init(_ items: [SwitcherItem], selected: Int) {
+    public init(_ items: [SwitcherItem], selected: Int, screen: ScreenID) {
         self.items = items
         self.selected = selected
+        self.screen = screen
     }
 }
 
@@ -113,7 +131,9 @@ enum Direction {
 
 public struct SwitcherState: Sendable {
     var config: SwitcherConfig
-    var snapshot = Snapshot(windows: [], apps: [], currentScreen: ScreenID(0))
+    var snapshot = Snapshot(
+        windows: [], apps: [], focusedWindow: nil, screens: Screens(mouse: ScreenID(0), primary: ScreenID(0))
+    )
     /// Recency Order: de la más reciente a la menos reciente.
     var recency: [WindowID] = []
     /// La App activa, que define el Scope Current App.
@@ -125,6 +145,9 @@ public struct SwitcherState: Sendable {
     struct Session {
         let scope: Scope
         var delayElapsed = false
+        /// Pantalla donde aparece el Window Switcher. Se decide con la primera foto de la sesión
+        /// (la que pide al arrancar, no la vieja) y no cambia hasta que termina.
+        var panelScreen: ScreenID?
         /// Lo que muestra el Window Switcher, o nil si no está visible.
         private var shown: SwitcherContent?
         /// Windows de la Switch Session, en Recency Order.
@@ -223,10 +246,11 @@ public struct SwitcherState: Sendable {
         }
 
         /// Muestra, actualiza u oculta el Window Switcher para que refleje la sesión en esta foto:
-        /// está visible si venció el Activation Delay y hay ítems.
+        /// está visible si venció el Activation Delay, ya se decidió la pantalla del panel y hay ítems.
         mutating func syncSwitcher(with snapshot: Snapshot) -> [SwitcherEffect] {
-            let content = SwitcherContent(snapshot.items(for: windows), selected: selected)
-            let target = delayElapsed && !content.items.isEmpty ? content : nil
+            let items = snapshot.items(for: windows)
+            let target = delayElapsed && !items.isEmpty
+                ? panelScreen.map { SwitcherContent(items, selected: selected, screen: $0) } : nil
             defer { shown = target }
             switch (shown, target) {
             case (nil, let new?): return [.showSwitcher(new)]
@@ -338,6 +362,7 @@ public struct SwitcherCore: Sendable {
             next.recency += unknown.map(\.id)
             guard var session = next.session else { return (next, []) }
             session.replaceWindows(with: eligibleWindows(next, session.scope))
+            session.panelScreen = session.panelScreen ?? panelScreen(of: snapshot, config: next.config)
             let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
@@ -359,15 +384,26 @@ public struct SwitcherCore: Sendable {
         .leftArrow: .previous, .rightArrow: .next, .upArrow: .up, .downArrow: .down,
     ]
 
+    /// Pantalla donde aparece el Window Switcher según la configuración. Con `.focusedWindow`, la
+    /// pantalla actual de la foto: la de la Window con foco o, si no hay, la del mouse.
+    private static func panelScreen(of snapshot: Snapshot, config: SwitcherConfig) -> ScreenID {
+        switch config.panelScreen {
+        case .mouse: snapshot.screens.mouse
+        case .primary: snapshot.screens.primary
+        case .focusedWindow: snapshot.currentScreen
+        }
+    }
+
     /// Las Windows del Scope en Recency Order. Current App: solo las de la App activa.
-    /// Reglas de inclusión: Space y pantalla actuales fijos; Minimized y Hidden Apps según la configuración.
+    /// Reglas de inclusión: Space actual fijo; Minimized, Hidden Apps y otras pantallas según la
+    /// configuración.
     private static func eligibleWindows(_ state: SwitcherState, _ scope: Scope) -> [WindowID] {
         let windowsByID = state.snapshot.windowsByID
         return state.recency.compactMap { id in
             guard let window = windowsByID[id],
                   scope == .allWindows || window.appID == state.activeApp,
                   window.isInCurrentSpace,
-                  window.screen == state.snapshot.currentScreen,
+                  state.config.includesOtherScreens || window.screen == state.snapshot.currentScreen,
                   state.config.includesMinimizedWindows || !window.isMinimized,
                   state.config.includesHiddenApps || !window.isAppHidden
             else { return nil }

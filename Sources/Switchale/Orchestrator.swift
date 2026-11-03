@@ -20,8 +20,24 @@ final class Orchestrator {
     private var switcherRefreshTimer: Timer?
     private var tap: EventTap?
     private var focus: FocusTracker?
+    private var defaultsObserver: NSObjectProtocol?
+    private var config = SwitcherPreferences.load()
+
+    private func reloadConfig() {
+        let loaded = SwitcherPreferences.load()
+        guard loaded != config else { return }
+        config = loaded
+        dispatch(.configChanged(loaded))
+    }
 
     func start() {
+        dispatch(.configChanged(SwitcherPreferences.load()))
+        // `defaults write` y los cambios de Preferencias se aplican sin reiniciar.
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadConfig() }
+        }
         source.refresh()
 
         let focus = FocusTracker(

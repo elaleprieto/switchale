@@ -1,5 +1,5 @@
 import Testing
-import SwitchaleCore
+@testable import SwitchaleCore
 
 @Suite("Quick Switch")
 struct QuickSwitchTests {
@@ -30,6 +30,7 @@ struct QuickSwitchTests {
     func afterDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        deliverFreshSnapshot(&c)
         _ = c.send(.activationDelayElapsed)
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
     }
@@ -126,14 +127,13 @@ struct QuickSwitchTests {
 
 @Suite("Quick Switch: qué Windows entran")
 struct QuickSwitchInclusionTests {
-    @Test("Se excluyen las de otros Spaces y las de otras pantallas, y con las dos inclusiones desactivadas también las Minimized y las de Hidden Apps")
+    @Test("Se excluyen las de otros Spaces, y con las dos inclusiones desactivadas también las Minimized y las de Hidden Apps")
     func exclusions() {
         var c = core([
             win(1, stack: 0),
             win(2, stack: 1, minimized: true),
             win(3, stack: 2, appHidden: true),
             win(4, stack: 3, inSpace: false),
-            win(5, stack: 4, screen: otherScreen),
             win(6, stack: 5),
         ], config: visibleOnly)
         #expect(quickSwitchTarget(&c) == WindowID(6))

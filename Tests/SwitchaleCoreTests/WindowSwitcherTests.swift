@@ -1,10 +1,12 @@
 import Testing
-import SwitchaleCore
+@testable import SwitchaleCore
 
 /// Abre una Switch Session (⌘⇥) y deja vencer el Activation Delay; devuelve los efectos del vencimiento.
 @discardableResult
 func holdHotkey(_ core: inout SwitcherCore) -> [SwitcherEffect] {
     _ = core.send(.keyDown(.tab, [.command], isRepeat: false))
+    // La foto que pide la Switch Session al arrancar (la pantalla del panel se decide con ella).
+    deliverFreshSnapshot(&core)
     return core.send(.activationDelayElapsed)
 }
 
@@ -17,14 +19,15 @@ struct WindowSwitcherVisibilityTests {
     @Test("Mantener el Hotkey más allá del Activation Delay muestra el Window Switcher con la selección en el segundo ítem")
     func showsAfterDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
-        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 1))])
+        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 1, screen: mainScreen))])
     }
 
     @Test("Si la Switch Session arranca con ⌘⇧⇥, la selección empieza en el último ítem")
     func shiftTabStartsAtLast() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         _ = c.send(.keyDown(.tab, [.command, .shift], isRepeat: false))
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 2))])
+        deliverFreshSnapshot(&c)
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 2, screen: mainScreen))])
         #expect(c.send(.keyDown(.tab, [.command, .shift], isRepeat: false)) == [.consumeEvent, .selectItem(1)])
     }
 
@@ -39,7 +42,7 @@ struct WindowSwitcherVisibilityTests {
     @Test("Con un solo ítem el Window Switcher se muestra igual, y soltar solo lo oculta")
     func singleItem() {
         var c = core([win(1, stack: 0)])
-        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1)], selected: 0))])
+        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1)], selected: 0, screen: mainScreen))])
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)) == [.consumeEvent, .selectItem(0)])
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher])
     }
@@ -57,7 +60,7 @@ struct WindowSwitcherVisibilityTests {
         var untitled = win(2, app: 7, stack: 1)
         untitled.title = ""
         var c = core([win(1, stack: 0), untitled])
-        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2, app: 7, title: "app7")], selected: 1))])
+        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2, app: 7, title: "app7")], selected: 1, screen: mainScreen))])
     }
 }
 
@@ -120,7 +123,7 @@ struct WindowSwitcherSnapshotTests {
         holdHotkey(&c)
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))  // selección en 3
         #expect(c.send(.snapshot(snapshot([win(2, stack: 0), win(3, stack: 1)])))
-            == [.updateSwitcher(.init([item(2), item(3)], selected: 1))])
+            == [.updateSwitcher(.init([item(2), item(3)], selected: 1, screen: mainScreen))])
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
     }
 
@@ -129,7 +132,7 @@ struct WindowSwitcherSnapshotTests {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         holdHotkey(&c)
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(3, stack: 1)])))
-            == [.updateSwitcher(.init([item(1), item(3)], selected: 1))])
+            == [.updateSwitcher(.init([item(1), item(3)], selected: 1, screen: mainScreen))])
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
     }
 
@@ -139,7 +142,7 @@ struct WindowSwitcherSnapshotTests {
         holdHotkey(&c)
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))  // selección en 3
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1)])))
-            == [.updateSwitcher(.init([item(1), item(2)], selected: 1))])
+            == [.updateSwitcher(.init([item(1), item(2)], selected: 1, screen: mainScreen))])
     }
 
     @Test("Si se cierran todas las Windows, el Window Switcher se oculta y soltar no hace nada")
@@ -154,7 +157,7 @@ struct WindowSwitcherSnapshotTests {
     func oneLeft() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         holdHotkey(&c)
-        #expect(c.send(.snapshot(snapshot([win(1, stack: 0)]))) == [.updateSwitcher(.init([item(1)], selected: 0))])
+        #expect(c.send(.snapshot(snapshot([win(1, stack: 0)]))) == [.updateSwitcher(.init([item(1)], selected: 0, screen: mainScreen))])
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher])
     }
 
@@ -170,7 +173,7 @@ struct WindowSwitcherSnapshotTests {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)]))) == [])
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 1))])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 1, screen: mainScreen))])
     }
 
     @Test("Si el Window Switcher no se mostró por no tener ítems y llegan Windows, aparece")
@@ -178,7 +181,7 @@ struct WindowSwitcherSnapshotTests {
         var c = core([])
         holdHotkey(&c)
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1)])))
-            == [.showSwitcher(.init([item(1), item(2)], selected: 1))])
+            == [.showSwitcher(.init([item(1), item(2)], selected: 1, screen: mainScreen))])
     }
 }
 

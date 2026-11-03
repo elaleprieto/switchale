@@ -57,3 +57,7 @@ El tiempo que hay que mantener el Hotkey antes de que aparezca el Window Switche
 **Thumbnail**:
 La imagen en miniatura del contenido de una Window que se muestra en el Window Switcher. Si no hay Thumbnail disponible, se muestra el ícono de la App y el título de la Window.
 _Avoid_: Preview, snapshot
+
+**Screen**:
+Una pantalla (monitor). La pantalla actual es la de la Window con foco o, si no hay una, la del mouse; el Window Switcher aparece en la que elige la configuración y no cambia durante la Switch Session.
+_Avoid_: Display, monitor
