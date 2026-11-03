@@ -1,23 +1,15 @@
 // Núcleo del switcher: función (estado, evento) → (estado, [efecto]).
 
 public struct SwitcherConfig: Sendable, Equatable {
-    public var allWindowsEnabled: Bool
-    public var currentAppEnabled: Bool
+    /// Los Scopes activados. Un Scope desactivado no abre Switch Sessions: su Hotkey hace lo que
+    /// hace en macOS.
+    public var enabledScopes: Set<Scope>
     /// Activation Delay por defecto: 80 ms.
     public var activationDelayMilliseconds: Int
 
-    public init(allWindowsEnabled: Bool = true, currentAppEnabled: Bool = true, activationDelayMilliseconds: Int = 80) {
-        self.allWindowsEnabled = allWindowsEnabled
-        self.currentAppEnabled = currentAppEnabled
+    public init(enabledScopes: Set<Scope> = Set(Scope.allCases), activationDelayMilliseconds: Int = 80) {
+        self.enabledScopes = enabledScopes
         self.activationDelayMilliseconds = activationDelayMilliseconds
-    }
-
-    /// Un Scope desactivado no abre Switch Sessions: su Hotkey hace lo que hace en macOS.
-    func isEnabled(_ scope: Scope) -> Bool {
-        switch scope {
-        case .allWindows: allWindowsEnabled
-        case .currentApp: currentAppEnabled
-        }
     }
 }
 
@@ -97,7 +89,7 @@ public struct SwitcherState: Sendable {
         /// Windows de la Switch Session, en Recency Order.
         var windows: [WindowID]
         var selected: Int
-        /// La Switch Session arrancó con ⌘⇧⇥.
+        /// La Switch Session arrancó con el Hotkey del Scope con ⇧.
         let startsBackwards: Bool
 
         init(scope: Scope, windows: [WindowID], startsBackwards: Bool) {
@@ -109,8 +101,8 @@ public struct SwitcherState: Sendable {
 
         var isSwitcherVisible: Bool { shown != nil }
 
-        /// Con ⌘⇥, el segundo ítem en Recency Order (un Quick Switch); con ⌘⇧⇥, el último.
-        /// Si hay uno solo, ese.
+        /// Con el Hotkey del Scope, el segundo ítem en Recency Order (un Quick Switch); con el
+        /// Hotkey del Scope con ⇧, el último. Si hay uno solo, ese.
         private static func initialSelection(_ windows: [WindowID], backwards: Bool) -> Int {
             if backwards { return max(0, windows.count - 1) }
             return windows.count >= 2 ? 1 : 0
@@ -193,7 +185,7 @@ public struct SwitcherCore: Sendable {
                 next.session = session
                 return (next, session.isSwitcherVisible ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
             }
-            guard let scope = Scope.allCases.first(where: { next.config.isEnabled($0) && $0.hotkey.matches(key, modifiers) })
+            guard let scope = Scope.allCases.first(where: { next.config.enabledScopes.contains($0) && $0.hotkey.matches(key, modifiers) })
             else { return (next, []) }
             next.heldKeys.insert(key)
             guard !isRepeat else { return (next, [.consumeEvent]) }

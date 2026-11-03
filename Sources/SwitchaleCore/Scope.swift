@@ -15,19 +15,3 @@ public enum Scope: Sendable, CaseIterable {
         }
     }
 }
-
-/// Un modificador y una tecla que abren la Switch Session de un Scope.
-public struct Hotkey: Sendable, Equatable {
-    public var modifier: Modifiers
-    public var key: KeyCode
-
-    public init(modifier: Modifiers, key: KeyCode) {
-        self.modifier = modifier
-        self.key = key
-    }
-
-    /// La tecla con el modificador, y opcionalmente ⇧ (para retroceder); ningún otro modificador.
-    func matches(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {
-        key == self.key && modifiers.contains(modifier) && modifiers.subtracting([modifier, .shift]).isEmpty
-    }
-}

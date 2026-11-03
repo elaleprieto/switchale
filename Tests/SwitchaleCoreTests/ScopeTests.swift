@@ -79,7 +79,7 @@ struct IndependentHotkeysTests {
 
     @Test("Con All Windows desactivado, ⌘⇥ pasa al sistema y ⌥` sigue funcionando")
     func allWindowsDisabled() {
-        var c = core(windows, config: .init(allWindowsEnabled: false), activeApp: 1)
+        var c = core(windows, config: .init(enabledScopes: [.currentApp]), activeApp: 1)
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)) == [])
         #expect(c.send(.modifiersChanged([])) == [])
         _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
@@ -88,7 +88,7 @@ struct IndependentHotkeysTests {
 
     @Test("Con Current App desactivado, ⌥` pasa al sistema y ⌘⇥ sigue funcionando")
     func currentAppDisabled() {
-        var c = core(windows, config: .init(currentAppEnabled: false), activeApp: 1)
+        var c = core(windows, config: .init(enabledScopes: [.allWindows]), activeApp: 1)
         #expect(c.send(.keyDown(.grave, [.option], isRepeat: false)) == [])
         #expect(c.send(.keyUp(.grave)) == [])
         #expect(c.send(.modifiersChanged([])) == [])
