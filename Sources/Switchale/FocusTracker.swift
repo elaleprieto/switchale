@@ -4,6 +4,10 @@ import SwitchaleCore
 
 /// Traduce cambios de foco (AX por App y NSWorkspace) en "una Window recibió foco" y
 /// "pasó a ser la App activa", y avisa cuando cambia el conjunto de Apps para refrescar la foto.
+///
+/// Para switchale misma no se usa AX: una consulta AX al propio proceso desde el main thread no
+/// puede responderse mientras el main thread espera, y bloquea hasta el timeout. Sus Windows
+/// enfocadas salen de AppKit (`keyWindow` y `NSWindow.didBecomeKeyNotification`).
 @MainActor
 final class FocusTracker {
     private var observers: [pid_t: AXObserver] = [:]
@@ -39,16 +43,22 @@ final class FocusTracker {
         }
         observeWorkspace(NSWorkspace.didHideApplicationNotification) { [weak self] _ in self?.onAppsChanged() }
         observeWorkspace(NSWorkspace.didUnhideApplicationNotification) { [weak self] _ in self?.onAppsChanged() }
+        observeOwnKeyWindow()
     }
 
     /// Informa que la App pasó a ser la activa (incluida switchale) y su Window enfocada, si tiene.
     func reportActivation(of app: NSRunningApplication) {
         onAppActivated(AppID(Int(app.processIdentifier)))
-        reportFocusedWindow(pid: app.processIdentifier)
+        if app.isSwitchale {
+            if let window = NSApp.keyWindow { reportOwnFocus(window) }
+        } else {
+            reportFocusedWindow(pid: app.processIdentifier)
+        }
     }
 
-    /// Informa la Window enfocada de la App (si hay una).
+    /// Informa la Window enfocada de la App (si hay una). Nunca para switchale: ver arriba.
     func reportFocusedWindow(pid: pid_t) {
+        guard pid != ProcessInfo.processInfo.processIdentifier else { return }
         guard let id = axFocusedWindowID(pid: pid) else { return }
         onFocus(id)
     }
@@ -61,8 +71,26 @@ final class FocusTracker {
         tokens.append(token)
     }
 
+    /// Una Window de switchale pasa a ser la key window con switchale activa.
+    private func observeOwnKeyWindow() {
+        let token = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] note in
+            guard let window = note.object as? NSWindow else { return }
+            MainActor.assumeIsolated {
+                guard NSApp.isActive else { return }
+                self?.reportOwnFocus(window)
+            }
+        }
+        tokens.append(token)
+    }
+
+    /// El número de una NSWindow es su CGWindowID, el mismo id que tiene en la foto.
+    private func reportOwnFocus(_ window: NSWindow) {
+        guard window.windowNumber > 0 else { return }
+        onFocus(WindowID(window.windowNumber))
+    }
+
     private func observeAllApps() {
-        for app in NSWorkspace.shared.runningApplications where app.ownsSwitchableWindows {
+        for app in NSWorkspace.shared.runningApplications where app.listsWindowsInSwitcher && !app.isSwitchale {
             observe(app)
         }
     }
@@ -71,7 +99,7 @@ final class FocusTracker {
     /// registrado y se reintenta cuando haya Accesibilidad.
     private func observe(_ app: NSRunningApplication) {
         let pid = app.processIdentifier
-        guard observers[pid] == nil else { return }
+        guard observers[pid] == nil, !app.isSwitchale else { return }
         var created: AXObserver?
         guard AXObserverCreate(pid, focusCallback, &created) == .success, let observer = created else {
             scheduleRetryIfNeeded()
