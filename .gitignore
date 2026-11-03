@@ -1,0 +1,15 @@
+# Restos del andamiaje Rust original
+/target
+
+# Proyecto Xcode generado por XcodeGen (la fuente es project.yml)
+*.xcodeproj
+*.xcworkspace
+
+# Productos de build
+/build/
+DerivedData/
+*.xcresult
+xcuserdata/
+.swiftpm/
+
+.DS_Store
