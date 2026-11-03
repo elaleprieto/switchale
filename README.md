@@ -29,6 +29,14 @@ Genera el proyecto y compila `build/DerivedData/Build/Products/<config>/switchal
 codesign -dv build/DerivedData/Build/Products/Debug/switchale.app
 ```
 
+## Permisos e inicio al loguearse
+
+Si falta Accesibilidad o Grabación de pantalla, al arrancar se abre la ventana de permisos (también desde "Permisos…" en el menú). Se actualiza sola cada segundo al otorgarlos. switchale se registra como login item (`SMAppService`) salvo que la preferencia `launchAtLogin` sea `NO`; para probar sin registrarlo:
+
+```sh
+build/DerivedData/Build/Products/Debug/switchale.app/Contents/MacOS/switchale -launchAtLogin NO
+```
+
 ## Tests
 
 ```sh
