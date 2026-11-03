@@ -13,7 +13,7 @@ Window Switcher para macOS: reemplaza ⌘⇥ con un panel que lista Windows (no 
 `project.yml` define el proyecto; `Switchale.xcodeproj` se genera con `xcodegen generate` y no se versiona. Targets:
 
 - `Switchale`: la app de barra de menú (AppKit).
-- `SwitchaleCore`: el núcleo del switcher, Swift puro (no importa AppKit, AX ni CoreGraphics).
+- `SwitchaleCore`: el núcleo del Window Switcher, Swift puro (no importa AppKit, AX ni CoreGraphics).
 - `SwitchaleCoreTests`: tests de Swift Testing del núcleo.
 
 ## Compilar
@@ -27,6 +27,14 @@ Genera el proyecto y compila `build/DerivedData/Build/Products/<config>/switchal
 
 ```sh
 codesign -dv build/DerivedData/Build/Products/Debug/switchale.app
+```
+
+## Permisos e inicio al loguearse
+
+Si falta Accesibilidad, al arrancar se abre la ventana de permisos; si solo falta Grabación de pantalla, solo en el primer arranque (siempre se puede abrir desde "Permisos…" en el menú). El primer clic en el botón de un permiso lo pide; los siguientes abren el panel de Configuración del Sistema. La ventana se actualiza sola cada segundo; como macOS puede no informar Grabación de pantalla hasta reabrir la app, una vez pedida ofrece "Reabrir switchale". Lo ya pedido y el primer arranque se guardan en `UserDefaults` (`requestedAccessibility`, `requestedScreenRecording`, `hasLaunched`). switchale se registra como login item (`SMAppService`) salvo que la preferencia `launchAtLogin` sea `NO`; para probar sin registrarlo:
+
+```sh
+build/DerivedData/Build/Products/Debug/switchale.app/Contents/MacOS/switchale -launchAtLogin NO
 ```
 
 ## Tests

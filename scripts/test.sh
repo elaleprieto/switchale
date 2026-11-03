@@ -1,5 +1,5 @@
 #!/bin/sh
-# Corre los tests de Swift Testing del núcleo del switcher.
+# Corre los tests de Swift Testing del núcleo del Window Switcher.
 set -eu
 cd "$(dirname "$0")/.."
 
