@@ -10,6 +10,14 @@ final class WindowSwitcherView {
     private let panel: NSPanel
     private let background = NSVisualEffectView()
     private var cells: [SwitcherCell] = []
+    /// Tamaño de las Thumbnails, de la configuración.
+    var thumbnailSize = ThumbnailSize() {
+        didSet { cellSize = Metrics.cellSize(for: thumbnailSize) }
+    }
+    private var cellSize = Metrics.cellSize(for: ThumbnailSize())
+    /// La Thumbnail ya capturada de una Window, si hay. Se consulta al armar la grilla, así un
+    /// cambio de contenido no deja las celdas sin imagen.
+    var thumbnailProvider: (WindowID) -> CGImage? = { _ in nil }
     /// Lo que se está mostrando, con la selección al día: si cambian las pantallas la grilla se
     /// rehace acá mismo, sin un efecto del núcleo que traiga el contenido.
     private var content: SwitcherContent?
@@ -69,6 +77,19 @@ final class WindowSwitcherView {
         layout(content)
     }
 
+    /// Una Thumbnail nueva o refrescada: se cambia solo la imagen de esa celda.
+    func thumbnailChanged(for window: WindowID) {
+        guard let index = content?.items.firstIndex(where: { $0.id == .window(window) }),
+              cells.indices.contains(index)
+        else { return }
+        cells[index].thumbnail = thumbnailProvider(window)
+    }
+
+    /// Se descartaron las Thumbnails (p. ej. se perdió el permiso): las celdas vuelven a ícono y título.
+    func thumbnailsDiscarded() {
+        for cell in cells { cell.thumbnail = nil }
+    }
+
     func select(_ index: Int) {
         content?.selected = index
         for (offset, cell) in cells.enumerated() { cell.isSelected = offset == index }
@@ -88,7 +109,7 @@ final class WindowSwitcherView {
         let screen = NSScreen.screens.first { $0.screenID == content.screen } ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-        let cell = Metrics.cellSize
+        let cell = cellSize
         let available = visible.width * Metrics.maxWidthFraction - 2 * Metrics.padding
         let fitting = Int((available + Metrics.spacing) / (cell.width + Metrics.spacing))
         let columns = max(1, min(items.count, fitting))
@@ -110,6 +131,8 @@ final class WindowSwitcherView {
 
             let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
             view.configure(title: item.title, icon: Self.icon(for: item.appID), mark: item.mark)
+            // Solo las Windows tienen Thumbnail: una Windowless App queda con ícono y título.
+            if case .window(let window) = item.id { view.thumbnail = thumbnailProvider(window) }
             view.isSelected = index == content.selected
             view.onClick = { [weak self] in self?.onClick(item.id) }
             background.addSubview(view)
@@ -134,8 +157,20 @@ final class WindowSwitcherView {
 
 /// Medidas del Window Switcher y de sus celdas, en puntos.
 private enum Metrics {
-    static let cellSize = NSSize(width: 132, height: 124)
+    /// La celda envuelve la Thumbnail con su margen y deja lugar al título debajo.
+    static func cellSize(for thumbnail: ThumbnailSize) -> NSSize {
+        NSSize(
+            width: CGFloat(thumbnail.width) + 2 * cellInset,
+            height: CGFloat(thumbnail.height) + 2 * cellInset + titleHeight + titleBottomOffset
+        )
+    }
+    /// Ícono grande: lo único que hay en la celda mientras no llega la Thumbnail.
     static let iconSize: CGFloat = 72
+    /// Ícono chico: encima de la Thumbnail, en su esquina inferior izquierda.
+    static let badgeIconSize: CGFloat = 32
+    /// Separación del ícono chico respecto de la esquina de la Thumbnail.
+    static let badgeIconMargin: CGFloat = 4
+    static let thumbnailCornerRadius: CGFloat = 6
     static let markerSize: CGFloat = 24
     static let markedIconAlpha: CGFloat = 0.5
     static let spacing: CGFloat = 8
@@ -155,14 +190,27 @@ private enum Metrics {
     static let selectionFillAlpha: CGFloat = 0.3
 }
 
-/// Una celda de la grilla: el ícono de la App y, debajo, el título de la Window.
+/// Una celda de la grilla: la Thumbnail de la Window con el ícono de la App encima y, debajo,
+/// el título. Mientras no hay Thumbnail muestra solo el ícono grande y el título.
 private final class SwitcherCell: NSView {
+    private let thumbnailView = NSImageView()
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let markerView = NSImageView()
+    private var thumbnailArea = NSRect.zero
 
     var isSelected = false {
         didSet { needsDisplay = true }
+    }
+
+    /// Reemplaza la imagen sin pasar por vacío: una Thumbnail refrescada no parpadea.
+    var thumbnail: CGImage? {
+        didSet {
+            guard thumbnail !== oldValue else { return }
+            thumbnailView.image = thumbnail.map { NSImage(cgImage: $0, size: .zero) }
+            thumbnailView.isHidden = thumbnail == nil
+            layoutIcon()
+        }
     }
 
     var onClick: (() -> Void)?
@@ -173,26 +221,7 @@ private final class SwitcherCell: NSView {
         layer?.cornerRadius = Metrics.cellCornerRadius
         layer?.borderWidth = Metrics.selectionBorderWidth
 
-        let iconSize = Metrics.iconSize
         let inset = Metrics.cellInset
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.frame = NSRect(
-            x: (frame.width - iconSize) / 2,
-            y: frame.height - inset - iconSize,
-            width: iconSize,
-            height: iconSize
-        )
-        addSubview(iconView)
-
-        markerView.contentTintColor = .secondaryLabelColor
-        markerView.frame = NSRect(
-            x: iconView.frame.maxX - Metrics.markerSize / 2,
-            y: iconView.frame.minY - Metrics.markerSize / 4,
-            width: Metrics.markerSize, height: Metrics.markerSize
-        )
-        markerView.isHidden = true
-        addSubview(markerView)
-
         label.alignment = .center
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
@@ -204,7 +233,24 @@ private final class SwitcherCell: NSView {
             width: frame.width - 2 * inset,
             height: Metrics.titleHeight
         )
+
+        let titleTop = label.frame.maxY
+        thumbnailArea = NSRect(x: inset, y: titleTop, width: frame.width - 2 * inset, height: frame.height - inset - titleTop)
+        thumbnailView.frame = thumbnailArea
+        thumbnailView.imageScaling = .scaleProportionallyUpOrDown
+        thumbnailView.wantsLayer = true
+        thumbnailView.layer?.cornerRadius = Metrics.thumbnailCornerRadius
+        thumbnailView.layer?.masksToBounds = true
+        thumbnailView.isHidden = true
+
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        markerView.contentTintColor = .secondaryLabelColor
+        markerView.isHidden = true
+        addSubview(thumbnailView)
+        addSubview(iconView)
+        addSubview(markerView)
         addSubview(label)
+        layoutIcon()
     }
 
     @available(*, unavailable)
@@ -217,6 +263,7 @@ private final class SwitcherCell: NSView {
         label.toolTip = look.note.map { "\(title) (\($0))" } ?? title
         iconView.image = icon
         iconView.alphaValue = look.alpha
+        thumbnailView.alphaValue = look.alpha
         markerView.image = look.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: look.note) }
         markerView.isHidden = look.symbol == nil
     }
@@ -246,6 +293,24 @@ private final class SwitcherCell: NSView {
     override func mouseUp(with event: NSEvent) {
         guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
         onClick?()
+    }
+
+    private func layoutIcon() {
+        if thumbnail == nil {
+            let size = Metrics.iconSize
+            iconView.frame = NSRect(
+                x: thumbnailArea.midX - size / 2, y: thumbnailArea.midY - size / 2, width: size, height: size
+            )
+        } else {
+            let size = Metrics.badgeIconSize
+            iconView.frame = NSRect(x: thumbnailArea.minX + Metrics.badgeIconMargin, y: thumbnailArea.minY + Metrics.badgeIconMargin, width: size, height: size)
+        }
+        // La marca (minimizada u oculta) va en la esquina inferior derecha del ícono, esté grande o chico.
+        markerView.frame = NSRect(
+            x: iconView.frame.maxX - Metrics.markerSize / 2,
+            y: iconView.frame.minY - Metrics.markerSize / 4,
+            width: Metrics.markerSize, height: Metrics.markerSize
+        )
     }
 
     override var wantsUpdateLayer: Bool { true }

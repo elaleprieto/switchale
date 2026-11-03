@@ -24,10 +24,14 @@ public struct SwitcherConfig: Sendable, Equatable {
     /// Activation Delay por defecto: 80 ms.
     public var activationDelayMilliseconds: Int
 
+    /// Tamaño de las Thumbnails (el slider llega con Preferencias).
+    public var thumbnailSize: ThumbnailSize
+
     public init(
         enabledScopes: Set<Scope> = Set(Scope.allCases), includesMinimizedWindows: Bool = true,
         includesHiddenApps: Bool = true, includesOtherScreens: Bool = true,
-        panelScreen: PanelScreen = .focusedWindow, activationDelayMilliseconds: Int = 80
+        panelScreen: PanelScreen = .focusedWindow, activationDelayMilliseconds: Int = 80,
+        thumbnailSize: ThumbnailSize = ThumbnailSize()
     ) {
         self.enabledScopes = enabledScopes
         self.includesMinimizedWindows = includesMinimizedWindows
@@ -35,6 +39,7 @@ public struct SwitcherConfig: Sendable, Equatable {
         self.includesOtherScreens = includesOtherScreens
         self.panelScreen = panelScreen
         self.activationDelayMilliseconds = activationDelayMilliseconds
+        self.thumbnailSize = thumbnailSize
     }
 }
 
