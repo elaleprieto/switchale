@@ -10,25 +10,45 @@ final class Orchestrator {
     private var core = SwitcherCore()
     private lazy var source = WindowSource { [weak self] snapshot in self?.dispatch(.snapshot(snapshot)) }
     private let activator = WindowActivator()
-    private let switcherView = WindowSwitcherView()
+    private lazy var switcherView = WindowSwitcherView(
+        onClick: { [weak self] id in self?.dispatch(.itemClicked(id)) },
+        onColumnsChanged: { [weak self] columns in self?.dispatch(.switcherColumnsChanged(columns)) }
+    )
     private var activationTimer: Timer?
     /// Mientras el Window Switcher está visible se refresca la foto, para que las Windows que se
     /// cierran salgan de la grilla.
     private var switcherRefreshTimer: Timer?
     private var tap: EventTap?
     private var focus: FocusTracker?
+    private var defaultsObserver: NSObjectProtocol?
+    private var config = SwitcherPreferences.load()
+
+    private func reloadConfig() {
+        let loaded = SwitcherPreferences.load()
+        guard loaded != config else { return }
+        config = loaded
+        dispatch(.configChanged(loaded))
+    }
 
     func start() {
+        dispatch(.configChanged(SwitcherPreferences.load()))
+        // `defaults write` y los cambios de Preferencias se aplican sin reiniciar.
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadConfig() }
+        }
         source.refresh()
 
         let focus = FocusTracker(
             onFocus: { [weak self] id in self?.dispatch(.windowFocused(id)) },
+            onAppActivated: { [weak self] app in self?.dispatch(.appActivated(app)) },
             onAppsChanged: { [weak self] in self?.source.refresh() }
         )
         self.focus = focus
         focus.start()
         if let front = NSWorkspace.shared.frontmostApplication {
-            focus.reportFocusedWindow(pid: front.processIdentifier)
+            focus.reportActivation(of: front)
         }
 
         let tap = EventTap { [weak self] event in self?.dispatch(event) ?? false }

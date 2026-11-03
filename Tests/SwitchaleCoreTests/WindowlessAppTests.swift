@@ -10,7 +10,7 @@ struct WindowlessAppTests {
     @Test("Las Windowless Apps van siempre después de todas las Windows")
     func afterAllWindows() {
         var c = core([win(1, stack: 0), win(2, app: 2, stack: 1)], windowless: [8, 9])
-        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2, app: 2), windowlessItem(8), windowlessItem(9)], selected: 1))])
+        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2, app: 2), windowlessItem(8), windowlessItem(9)], selected: 1, screen: mainScreen))])
     }
 
     @Test("Una App deja de ser Windowless cuando abre una Window y pasa a listarse por sus Windows")
@@ -18,7 +18,7 @@ struct WindowlessAppTests {
         var c = core([win(1, stack: 0)], windowless: [8])
         holdHotkey(&c)
         let effects = c.send(.snapshot(snapshot([win(1, stack: 0), win(5, app: 8, stack: 1)], windowless: [8])))
-        #expect(effects == [.updateSwitcher(.init([item(1), item(5, app: 8, title: "w5")], selected: 1))])
+        #expect(effects == [.updateSwitcher(.init([item(1), item(5, app: 8, title: "w5")], selected: 1, screen: mainScreen))])
     }
 
     @Test("Soltar el modificador con una Windowless App seleccionada la activa como el Dock")
