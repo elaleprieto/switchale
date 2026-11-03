@@ -37,6 +37,18 @@ Si falta Accesibilidad, al arrancar se abre la ventana de permisos; si solo falt
 build/DerivedData/Build/Products/Debug/switchale.app/Contents/MacOS/switchale -launchAtLogin NO
 ```
 
+## Configuración del Window Switcher
+
+Todavía no hay control en Preferencias (#12): se cambia con `defaults write` y se aplica sin reiniciar la app (en la siguiente Switch Session).
+
+- `includesOtherScreens` (Bool, por defecto `YES`): si es `NO`, solo entran las Windows de la pantalla actual, que es la de la Window con foco (o la del mouse si no hay una).
+- `panelScreen` (`focusedWindow` por defecto, `mouse` o `primary`): en qué pantalla aparece el Window Switcher. Se decide al empezar la Switch Session y no cambia mientras dura.
+
+```sh
+defaults write <bundle id> includesOtherScreens -bool NO
+defaults write <bundle id> panelScreen -string mouse
+```
+
 ## Tests
 
 ```sh

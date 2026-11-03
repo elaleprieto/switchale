@@ -61,3 +61,7 @@ _Avoid_: Preview, snapshot
 **Grabación de pantalla** (Screen Recording):
 El permiso de macOS que hace falta para capturar el contenido de otras Windows. Sin él no hay Thumbnails y el Window Switcher muestra solo el ícono y el título.
 _Avoid_: Screen capture permission
+
+**Screen**:
+Una pantalla (monitor). La pantalla actual es la de la Window con foco o, si no hay una, la del mouse; el Window Switcher aparece en la que elige la configuración y no cambia durante la Switch Session.
+_Avoid_: Display, monitor

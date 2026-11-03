@@ -1,20 +1,57 @@
 import AppKit
 import ApplicationServices
+import SwitchaleCore
 
-/// Ejecuta el efecto "activar Window": restaura, muestra la App, sube solo esa Window y le da foco.
+/// Ejecuta el efecto "activar Window": muestra la App, restaura la Window, sube solo esa Window y le da foco.
+///
+/// `unhide()` y desminimizar son asíncronos: el Raise/Focused solo corre cuando la App ya no está
+/// Hidden y la Window ya no está Minimized (con un timeout corto, tras el cual se intenta igual).
+/// Con APIs públicas no se pueden ocultar las otras Windows de la App: quedan visibles detrás de
+/// la activada (ADR-0002/0003).
 @MainActor
 struct WindowActivator {
+    private static let pollInterval: Duration = .milliseconds(20)
+    private static let timeout: Duration = .milliseconds(500)
+
     /// Devuelve false sin tocar nada si la Window o su App ya no existen.
     @discardableResult
     func activate(_ handle: WindowHandle) -> Bool {
         let element = handle.element
         let app = handle.app
+        if app.isSwitchale { return activateOwn(handle.id) }
         guard !app.isTerminated, axAttribute(element, kAXRoleAttribute) != nil else { return false }
-        if axIsMinimized(element) {
-            AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        let wasHidden = app.isHidden
+        let wasMinimized = axIsMinimized(element)
+        if !wasHidden && !wasMinimized {
+            focus(element, of: app)
+            return true
         }
-        if app.isHidden { app.unhide() }
+        Task { @MainActor in
+            // Primero la App y después la Window: una Window minimizada de una App oculta necesita las dos.
+            if wasHidden {
+                app.unhide()
+                await Self.wait { !app.isHidden }
+            }
+            if wasMinimized {
+                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+                await Self.wait { !axIsMinimized(element) }
+            }
+            guard !app.isTerminated else { return }
+            focus(element, of: app)
+        }
+        return true
+    }
 
+    /// Reintenta cada `pollInterval` hasta que se cumpla la condición o venza el timeout.
+    private static func wait(until condition: @MainActor () -> Bool) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while !condition(), clock.now < deadline {
+            try? await Task.sleep(for: pollInterval)
+        }
+    }
+
+    private func focus(_ element: AXUIElement, of app: NSRunningApplication) {
         AXUIElementPerformAction(element, kAXRaiseAction as CFString)
         AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
         AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
@@ -26,6 +63,36 @@ struct WindowActivator {
         AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
         NSApplication.shared.yieldActivation(to: app)
         app.activate(from: NSRunningApplication.current, options: [])
+    }
+
+    /// Una Window de switchale se activa con AppKit: AX contra el propio proceso desde el main
+    /// thread bloquea hasta el timeout.
+    private func activateOwn(_ id: WindowID) -> Bool {
+        guard let window = NSApp.window(withWindowNumber: id.rawValue) else { return false }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        NSApp.unhide(nil)
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
         return true
+    }
+
+    /// Activa una Windowless App como el clic en su ícono del Dock: `openApplication` sobre una App
+    /// ya en ejecución dispara el reopen (que también la muestra si estaba Hidden), que normalmente
+    /// abre su ventana por defecto. `completion` recibe false, en el main thread, si la App ya no
+    /// existe o el sistema no pudo abrirla.
+    func activateApp(pid: pid_t, completion: @escaping @MainActor (Bool) -> Void) {
+        guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated,
+              let url = app.bundleURL
+        else {
+            completion(false)
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { completion(error == nil) }
+            }
+        }
     }
 }

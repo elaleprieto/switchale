@@ -2,14 +2,14 @@ import AppKit
 import SwitchaleCore
 
 /// El Window Switcher en pantalla: un `NSPanel` no activante con fondo translúcido y una grilla
-/// centrada que pasa a la siguiente fila cuando no entra. Solo dibuja lo que pide el núcleo;
-/// el teclado lo recibe el event tap, así que el `NSPanel` nunca toma foco.
+/// centrada en la pantalla que pasa a la siguiente fila cuando no entra. Solo dibuja lo que pide
+/// el núcleo; el teclado lo recibe el event tap, así que el `NSPanel` nunca toma foco. Le informa
+/// al núcleo los clics en las celdas y cuántas columnas tiene la grilla.
 @MainActor
 final class WindowSwitcherView {
     private let panel: NSPanel
     private let background = NSVisualEffectView()
     private var cells: [SwitcherCell] = []
-    private var windowIDs: [WindowID] = []
     /// Tamaño de las Thumbnails, de la configuración.
     var thumbnailSize = ThumbnailSize() {
         didSet { cellSize = Metrics.cellSize(for: thumbnailSize) }
@@ -18,8 +18,18 @@ final class WindowSwitcherView {
     /// La Thumbnail ya capturada de una Window, si hay. Se consulta al armar la grilla, así un
     /// cambio de contenido no deja las celdas sin imagen.
     var thumbnailProvider: (WindowID) -> CGImage? = { _ in nil }
+    /// Lo que se está mostrando, con la selección al día: si cambian las pantallas la grilla se
+    /// rehace acá mismo, sin un efecto del núcleo que traiga el contenido.
+    private var content: SwitcherContent?
+    /// Columnas ya informadas al núcleo en esta Switch Session. Se olvidan en cada `show`, porque
+    /// el núcleo arranca cada Switch Session sin columnas.
+    private var reportedColumns: Int?
+    private let onClick: (ItemID) -> Void
+    private let onColumnsChanged: (Int) -> Void
 
-    init() {
+    init(onClick: @escaping (ItemID) -> Void, onColumnsChanged: @escaping (Int) -> Void) {
+        self.onClick = onClick
+        self.onColumnsChanged = onColumnsChanged
         panel = NSPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -44,9 +54,21 @@ final class WindowSwitcherView {
         background.layer?.cornerRadius = Metrics.cornerRadius
         background.layer?.masksToBounds = true
         panel.contentView = background
+
+        // Si cambia la resolución o la disposición de las pantallas con el Window Switcher abierto,
+        // la grilla se rehace y puede cambiar de columnas.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible, let content = self.content else { return }
+                self.layout(content)
+            }
+        }
     }
 
     func show(_ content: SwitcherContent) {
+        reportedColumns = nil
         layout(content)
         panel.orderFrontRegardless()
     }
@@ -57,7 +79,9 @@ final class WindowSwitcherView {
 
     /// Una Thumbnail nueva o refrescada: se cambia solo la imagen de esa celda.
     func thumbnailChanged(for window: WindowID) {
-        guard let index = windowIDs.firstIndex(of: window) else { return }
+        guard let index = content?.items.firstIndex(where: { $0.id == .window(window) }),
+              cells.indices.contains(index)
+        else { return }
         cells[index].thumbnail = thumbnailProvider(window)
     }
 
@@ -67,18 +91,22 @@ final class WindowSwitcherView {
     }
 
     func select(_ index: Int) {
+        content?.selected = index
         for (offset, cell) in cells.enumerated() { cell.isSelected = offset == index }
     }
 
     func hide() {
+        content = nil
         panel.orderOut(nil)
     }
 
     // MARK: - Grilla
 
+    /// Arma la grilla y le informa al núcleo las columnas que quedaron, si cambiaron.
     private func layout(_ content: SwitcherContent) {
+        self.content = content
         let items = content.items
-        let screen = NSScreen.main ?? NSScreen.screens.first
+        let screen = NSScreen.screens.first { $0.screenID == content.screen } ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
         let cell = cellSize
@@ -92,30 +120,38 @@ final class WindowSwitcherView {
         let size = NSSize(width: gridWidth + 2 * Metrics.padding, height: gridHeight + 2 * Metrics.padding)
 
         cells.forEach { $0.removeFromSuperview() }
-        windowIDs = items.map(\.windowID)
         cells = items.enumerated().map { index, item in
             let row = index / columns
             let column = index % columns
-            // Cada fila se centra: la última, si está incompleta, queda en el medio.
-            let inRow = min(columns, items.count - row * columns)
-            let rowWidth = CGFloat(inRow) * cell.width + CGFloat(inRow - 1) * Metrics.spacing
-            let x = (size.width - rowWidth) / 2 + CGFloat(column) * (cell.width + Metrics.spacing)
+            // Todas las filas arrancan a la izquierda del bloque, también la última si está
+            // incompleta: así la columna i queda en la misma X en cada fila y ↑/↓ del núcleo, que
+            // navegan por índice (± columnas), coinciden con lo que se ve.
+            let x = Metrics.padding + CGFloat(column) * (cell.width + Metrics.spacing)
             let y = size.height - Metrics.padding - CGFloat(row + 1) * cell.height - CGFloat(row) * Metrics.spacing
 
             let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
-            view.configure(title: item.title, icon: Self.icon(for: item.appID))
-            view.thumbnail = thumbnailProvider(item.windowID)
+            view.configure(title: item.title, icon: Self.icon(for: item.appID), mark: item.mark)
+            // Solo las Windows tienen Thumbnail: una Windowless App queda con ícono y título.
+            if case .window(let window) = item.id { view.thumbnail = thumbnailProvider(window) }
             view.isSelected = index == content.selected
+            view.onClick = { [weak self] in self?.onClick(item.id) }
             background.addSubview(view)
             return view
         }
 
         let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        reportColumnsIfChanged(columns)
+    }
+
+    private func reportColumnsIfChanged(_ columns: Int) {
+        guard columns != reportedColumns else { return }
+        reportedColumns = columns
+        onColumnsChanged(columns)
     }
 
     private static func icon(for app: AppID) -> NSImage? {
-        NSRunningApplication(processIdentifier: pid_t(app.rawValue))?.icon
+        NSRunningApplication(processIdentifier: app.pid)?.icon
     }
 }
 
@@ -135,6 +171,8 @@ private enum Metrics {
     /// Separación del ícono chico respecto de la esquina de la Thumbnail.
     static let badgeIconMargin: CGFloat = 4
     static let thumbnailCornerRadius: CGFloat = 6
+    static let markerSize: CGFloat = 24
+    static let markedIconAlpha: CGFloat = 0.5
     static let spacing: CGFloat = 8
     static let padding: CGFloat = 20
     static let cornerRadius: CGFloat = 18
@@ -158,6 +196,7 @@ private final class SwitcherCell: NSView {
     private let thumbnailView = NSImageView()
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    private let markerView = NSImageView()
     private var thumbnailArea = NSRect.zero
 
     var isSelected = false {
@@ -173,6 +212,8 @@ private final class SwitcherCell: NSView {
             layoutIcon()
         }
     }
+
+    var onClick: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -203,8 +244,11 @@ private final class SwitcherCell: NSView {
         thumbnailView.isHidden = true
 
         iconView.imageScaling = .scaleProportionallyUpOrDown
+        markerView.contentTintColor = .secondaryLabelColor
+        markerView.isHidden = true
         addSubview(thumbnailView)
         addSubview(iconView)
+        addSubview(markerView)
         addSubview(label)
         layoutIcon()
     }
@@ -212,10 +256,43 @@ private final class SwitcherCell: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) no se usa") }
 
-    func configure(title: String, icon: NSImage?) {
+    func configure(title: String, icon: NSImage?, mark: WindowMark) {
+        // Marca visual: ícono atenuado y un símbolo en la esquina (minimizada u oculta).
+        let look = Self.look(of: mark)
         label.stringValue = title
-        label.toolTip = title
+        label.toolTip = look.note.map { "\(title) (\($0))" } ?? title
         iconView.image = icon
+        iconView.alphaValue = look.alpha
+        thumbnailView.alphaValue = look.alpha
+        markerView.image = look.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: look.note) }
+        markerView.isHidden = look.symbol == nil
+    }
+
+    /// Cómo se ve cada marca: símbolo, nota (tooltip y accesibilidad) y alpha del ícono.
+    private static func look(of mark: WindowMark) -> (symbol: String?, note: String?, alpha: CGFloat) {
+        switch mark {
+        case .none: (nil, nil, 1)
+        case .minimized: ("minus.circle.fill", "minimizada", Metrics.markedIconAlpha)
+        case .appHidden: ("eye.slash.fill", "App oculta", Metrics.markedIconAlpha)
+        }
+    }
+
+    // El `NSPanel` nunca es key: sin esto el primer clic solo "activaría" la ventana.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// Los clics sobre el ícono o el título los recibe la celda.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        frame.contains(point) ? self : nil
+    }
+
+    // Vacío a propósito: la celda se queda con el mouseDown (por defecto `NSView` lo pasa al
+    // responder siguiente) y el clic se resuelve en `mouseUp`.
+    override func mouseDown(with event: NSEvent) {}
+
+    /// El clic cuenta al soltar el botón dentro de la celda, como un botón.
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onClick?()
     }
 
     private func layoutIcon() {
@@ -228,6 +305,12 @@ private final class SwitcherCell: NSView {
             let size = Metrics.badgeIconSize
             iconView.frame = NSRect(x: thumbnailArea.minX + Metrics.badgeIconMargin, y: thumbnailArea.minY + Metrics.badgeIconMargin, width: size, height: size)
         }
+        // La marca (minimizada u oculta) va en la esquina inferior derecha del ícono, esté grande o chico.
+        markerView.frame = NSRect(
+            x: iconView.frame.maxX - Metrics.markerSize / 2,
+            y: iconView.frame.minY - Metrics.markerSize / 4,
+            width: Metrics.markerSize, height: Metrics.markerSize
+        )
     }
 
     override var wantsUpdateLayer: Bool { true }

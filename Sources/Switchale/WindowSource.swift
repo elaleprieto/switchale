@@ -4,6 +4,7 @@ import SwitchaleCore
 
 /// Lo necesario para activar una Window conocida en la última foto.
 struct WindowHandle {
+    let id: WindowID
     let element: AXUIElement
     let app: NSRunningApplication
 }
@@ -37,8 +38,9 @@ final class WindowSource {
         isCapturing = true
         // Lo de AppKit (pantalla actual, Apps en ejecución) se lee acá, en el main thread.
         let input = CaptureInput(
-            apps: NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated },
-            currentScreen: Self.currentScreen()
+            apps: NSWorkspace.shared.runningApplications.filter { $0.listsWindowsInSwitcher && !$0.isTerminated },
+            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            screens: Screens(mouse: Self.mouseScreen(), primary: ScreenID(display: CGMainDisplayID()))
         )
         queue.async { [weak self] in
             let capture = Self.capture(input)
@@ -64,7 +66,8 @@ final class WindowSource {
     /// propiedades de `NSRunningApplication` se pueden leer desde cualquier hilo.
     private struct CaptureInput: @unchecked Sendable {
         let apps: [NSRunningApplication]
-        let currentScreen: ScreenID
+        let frontmostPID: pid_t?
+        let screens: Screens
     }
 
     private struct Capture: @unchecked Sendable {
@@ -73,23 +76,26 @@ final class WindowSource {
     }
 
     private nonisolated static func capture(_ input: CaptureInput) -> Capture {
-        let (cgInfo, onScreenIDs) = cgWindowInfo()
-        let currentScreen = input.currentScreen
+        let cg = cgWindowInfo()
+        // La Window con foco según AX, leída al tomar la foto (la pantalla actual sale de ella).
+        let focusedWindow = input.frontmostPID.flatMap { axFocusedWindowID(pid: $0) }
 
         var windows: [Window] = []
+        var windowlessApps: [AppID] = []
         var apps: [AppInfo] = []
         var newHandles: [WindowID: WindowHandle] = [:]
 
         for app in input.apps {
-            let appID = AppID(Int(app.processIdentifier))
+            let appID = AppID(pid: app.processIdentifier)
             apps.append(AppInfo(id: appID, name: app.localizedName ?? ""))
             let appElement = axApplicationElement(pid: app.processIdentifier)
-            guard let axWindows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] else { continue }
+            let axWindows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] ?? []
+            var hasWindows = false
 
             for element in axWindows {
                 // Si el id no está en CGWindowList (o no es de la capa normal), no es una Window.
                 guard let id = axWindowID(element),
-                      let entry = cgInfo[id],
+                      let entry = cg.entries[id],
                       entry.layer == 0,
                       isStandardWindow(element)
                 else { continue }
@@ -97,22 +103,31 @@ final class WindowSource {
                 let isMinimized = axIsMinimized(element)
                 // AX solo lista las Windows del Space actual (y las Minimized); lo que no está en
                 // pantalla ni minimizado ni de una App oculta no se puede ubicar en el Space actual.
-                let isInCurrentSpace = onScreenIDs.contains(id) || isMinimized || app.isHidden
+                let isInCurrentSpace = cg.onScreenIDs.contains(id) || isMinimized || app.isHidden
                 windows.append(Window(
                     id: id,
                     appID: appID,
                     title: (axAttribute(element, kAXTitleAttribute) as? String) ?? "",
-                    screen: screen(containing: entry.bounds) ?? currentScreen,
+                    screen: screen(containing: entry.bounds) ?? input.screens.mouse,
                     isInCurrentSpace: isInCurrentSpace,
                     isMinimized: isMinimized,
                     isAppHidden: app.isHidden,
                     stackIndex: entry.stackIndex
                 ))
-                newHandles[id] = WindowHandle(element: element, app: app)
+                newHandles[id] = WindowHandle(id: id, element: element, app: app)
+                hasWindows = true
+            }
+            // Windowless: sin Windows nuestras y sin ventanas normales en CoreGraphics (que sí ve
+            // las de otros Spaces, que AX no lista).
+            if !hasWindows, !cg.pidsWithNormalWindows.contains(app.processIdentifier) {
+                windowlessApps.append(appID)
             }
         }
         return Capture(
-            snapshot: Snapshot(windows: windows, apps: apps, currentScreen: currentScreen),
+            snapshot: Snapshot(
+                windows: windows, apps: apps, focusedWindow: focusedWindow, screens: input.screens,
+                windowlessApps: windowlessApps
+            ),
             handles: newHandles
         )
     }
@@ -125,22 +140,45 @@ final class WindowSource {
         let bounds: CGRect
     }
 
-    private nonisolated static func cgWindowInfo() -> ([WindowID: CGEntry], Set<WindowID>) {
+    private struct CGInfo {
+        let entries: [WindowID: CGEntry]
+        let onScreenIDs: Set<WindowID>
+        /// Dueños de al menos una ventana normal (ver `isNormalCGWindow`).
+        let pidsWithNormalWindows: Set<pid_t>
+    }
+
+    /// Tamaño mínimo (ancho y alto) de una ventana para contar como Window.
+    private nonisolated static let minimumWindowSize: CGFloat = 100
+
+    /// Ventana normal en CoreGraphics: capa 0, de tamaño mínimo y visible (alpha > 0). `.optionAll`
+    /// también lista ventanas que la App sacó de pantalla (orderOut) sin cerrarlas; ésas no cuentan,
+    /// si no una App sin Windows reales (p. ej. Finder) nunca sería Windowless. Las ventanas de
+    /// otros Spaces siguen contando: no están en pantalla pero son reales, y AX no las lista.
+    private nonisolated static func isNormalCGWindow(layer: Int, bounds: CGRect, alpha: Double) -> Bool {
+        layer == 0 && bounds.width >= minimumWindowSize && bounds.height >= minimumWindowSize && alpha > 0
+    }
+
+    private nonisolated static func cgWindowInfo() -> CGInfo {
         let all = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         var entries: [WindowID: CGEntry] = [:]
+        var pidsWithNormalWindows = Set<pid_t>()
         for (index, info) in all.enumerated() {
             guard let number = info[kCGWindowNumber as String] as? CGWindowID else { continue }
             var bounds = CGRect.zero
             if let dictionary = info[kCGWindowBounds as String] as? NSDictionary {
                 CGRectMakeWithDictionaryRepresentation(dictionary, &bounds)
             }
-            entries[WindowID(Int(number))] = CGEntry(
-                layer: info[kCGWindowLayer as String] as? Int ?? 0, stackIndex: index, bounds: bounds
-            )
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            entries[WindowID(Int(number))] = CGEntry(layer: layer, stackIndex: index, bounds: bounds)
+            let alpha = info[kCGWindowAlpha as String] as? Double ?? 1
+            if isNormalCGWindow(layer: layer, bounds: bounds, alpha: alpha),
+               let pid = info[kCGWindowOwnerPID as String] as? pid_t {
+                pidsWithNormalWindows.insert(pid)
+            }
         }
         let onScreenIDs = Set(onScreen.compactMap { ($0[kCGWindowNumber as String] as? CGWindowID).map { WindowID(Int($0)) } })
-        return (entries, onScreenIDs)
+        return CGInfo(entries: entries, onScreenIDs: onScreenIDs, pidsWithNormalWindows: pidsWithNormalWindows)
     }
 
     /// Solo subrol estándar o diálogo, de al menos 100×100.
@@ -151,18 +189,16 @@ final class WindowSource {
         if let value = axAttribute(element, kAXSizeAttribute), CFGetTypeID(value) == AXValueGetTypeID() {
             AXValueGetValue(value as! AXValue, .cgSize, &size)
         }
-        return size.width >= 100 && size.height >= 100
+        return size.width >= minimumWindowSize && size.height >= minimumWindowSize
     }
 
     // MARK: - Pantallas
 
-    private static func currentScreen() -> ScreenID {
-        let display = NSScreen.main.flatMap(displayID(of:)) ?? CGMainDisplayID()
-        return ScreenID(Int(display))
-    }
-
-    private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
-        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+    /// La pantalla donde está el mouse; si no cae en ninguna, la principal.
+    private static func mouseScreen() -> ScreenID {
+        let location = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(location) }?.screenID
+            ?? ScreenID(display: CGMainDisplayID())
     }
 
     /// Pantalla con mayor intersección con `bounds` (coordenadas globales de CoreGraphics).
@@ -173,7 +209,7 @@ final class WindowSource {
         let best = displays.prefix(Int(count)).max { first, second in
             CGDisplayBounds(first).intersection(bounds).area < CGDisplayBounds(second).intersection(bounds).area
         }
-        return best.map { ScreenID(Int($0)) }
+        return best.map(ScreenID.init(display:))
     }
 }
 

@@ -7,8 +7,9 @@ final class Orchestrator {
     /// Cada cuánto se refresca la foto mientras el Window Switcher está visible.
     private static let switcherRefreshInterval: TimeInterval = 0.5
 
-    /// La configuración vigente; al cambiarla se avisa al núcleo y se actualiza la vista.
-    private var config = SwitcherConfig() {
+    /// La configuración vigente, de `SwitcherPreferences`; al cambiarla se avisa al núcleo y se
+    /// actualiza la vista.
+    private var config = SwitcherPreferences.load() {
         didSet {
             switcherView.thumbnailSize = config.thumbnailSize
             dispatch(.configChanged(config))
@@ -21,25 +22,44 @@ final class Orchestrator {
     private var visibleWindows: [WindowID] = []
     private lazy var source = WindowSource { [weak self] snapshot in self?.dispatch(.snapshot(snapshot)) }
     private let activator = WindowActivator()
-    private let switcherView = WindowSwitcherView()
+    private lazy var switcherView = WindowSwitcherView(
+        onClick: { [weak self] id in self?.dispatch(.itemClicked(id)) },
+        onColumnsChanged: { [weak self] columns in self?.dispatch(.switcherColumnsChanged(columns)) }
+    )
     private var activationTimer: Timer?
     /// Mientras el Window Switcher está visible se refresca la foto, para que las Windows que se
     /// cierran salgan de la grilla.
     private var switcherRefreshTimer: Timer?
     private var tap: EventTap?
     private var focus: FocusTracker?
+    private var defaultsObserver: NSObjectProtocol?
+
+    /// Asignar `config` ya avisa al núcleo y a la vista.
+    private func reloadConfig() {
+        let loaded = SwitcherPreferences.load()
+        guard loaded != config else { return }
+        config = loaded
+    }
 
     func start() {
+        reloadConfig()
+        // `defaults write` y los cambios de Preferencias se aplican sin reiniciar.
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadConfig() }
+        }
         source.refresh()
 
         let focus = FocusTracker(
             onFocus: { [weak self] id in self?.dispatch(.windowFocused(id)) },
+            onAppActivated: { [weak self] app in self?.dispatch(.appActivated(app)) },
             onAppsChanged: { [weak self] in self?.source.refresh() }
         )
         self.focus = focus
         focus.start()
         if let front = NSWorkspace.shared.frontmostApplication {
-            focus.reportFocusedWindow(pid: front.processIdentifier)
+            focus.reportActivation(of: front)
         }
 
         switcherView.thumbnailSize = config.thumbnailSize
@@ -71,6 +91,10 @@ final class Orchestrator {
                 } else {
                     dispatch(.activationFailed(id))
                 }
+            case .activateApp(let app):
+                activator.activateApp(pid: app.pid) { [weak self] succeeded in
+                    if !succeeded { self?.dispatch(.appActivationFailed(app)) }
+                }
             case .refreshSnapshot:
                 source.refresh()
             case .consumeEvent:
@@ -95,7 +119,10 @@ final class Orchestrator {
     }
 
     private func switcherContentChanged(_ content: SwitcherContent) {
-        visibleWindows = content.items.map(\.windowID)
+        // Solo las Windows tienen Thumbnail: las Windowless Apps quedan con ícono y título.
+        visibleWindows = content.items.compactMap { item in
+            if case .window(let window) = item.id { window } else { nil }
+        }
         requestThumbnails()
     }
 

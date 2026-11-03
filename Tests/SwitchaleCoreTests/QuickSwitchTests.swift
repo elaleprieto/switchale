@@ -1,5 +1,5 @@
 import Testing
-import SwitchaleCore
+@testable import SwitchaleCore
 
 @Suite("Quick Switch")
 struct QuickSwitchTests {
@@ -30,6 +30,7 @@ struct QuickSwitchTests {
     func afterDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        deliverFreshSnapshot(&c)
         _ = c.send(.activationDelayElapsed)
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
     }
@@ -50,7 +51,7 @@ struct QuickSwitchTests {
 
     @Test("Con el Scope desactivado el evento pasa al sistema")
     func disabled() {
-        var c = core([win(1, stack: 0), win(2, stack: 1)], config: .init(allWindowsEnabled: false))
+        var c = core([win(1, stack: 0), win(2, stack: 1)], config: .init(enabledScopes: [.currentApp]))
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)) == [])
         #expect(c.send(.keyUp(.tab)) == [])
         #expect(c.send(.modifiersChanged([])) == [])
@@ -126,30 +127,64 @@ struct QuickSwitchTests {
 
 @Suite("Quick Switch: qué Windows entran")
 struct QuickSwitchInclusionTests {
-    @Test("Se excluyen las Minimized, las de Hidden Apps, las de otros Spaces y las de otras pantallas")
+    @Test("Se excluyen las de otros Spaces, y con las dos inclusiones desactivadas también las Minimized y las de Hidden Apps")
     func exclusions() {
         var c = core([
             win(1, stack: 0),
             win(2, stack: 1, minimized: true),
             win(3, stack: 2, appHidden: true),
             win(4, stack: 3, inSpace: false),
-            win(5, stack: 4, screen: otherScreen),
             win(6, stack: 5),
-        ])
+        ], config: visibleOnly)
         #expect(quickSwitchTarget(&c) == WindowID(6))
     }
 
     @Test("Si solo queda una Window elegible, no se activa nada")
     func onlyOneEligible() {
-        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true)])
+        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true)], config: visibleOnly)
         #expect(quickSwitchTarget(&c) == nil)
     }
 
     @Test("Una Window que sale de Minimized vuelve a entrar sin perder su lugar de Recency Order")
     func unminimizedReturns() {
-        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2)])
+        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2)], config: visibleOnly)
         #expect(quickSwitchTarget(&c) == WindowID(3))
         _ = c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])))
         #expect(quickSwitchTarget(&c) == WindowID(2))
+    }
+}
+
+@Suite("Minimized Windows y Hidden Apps")
+struct MinimizedAndHiddenInclusionTests {
+    private let windows = [win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2, appHidden: true)]
+
+    private func shownItems(_ config: SwitcherConfig) -> [SwitcherItem] {
+        var c = core(windows, config: config)
+        guard case .showSwitcher(let content)? = holdHotkey(&c).first else { Issue.record("sin Switcher"); return [] }
+        return content.items
+    }
+
+    @Test("Por defecto las Minimized y las de Hidden Apps entran, y el ítem las marca")
+    func includedByDefault() {
+        let items = shownItems(.init())
+        #expect(items.map(\.id) == [.window(WindowID(1)), .window(WindowID(2)), .window(WindowID(3))])
+        #expect(items.map(\.mark) == [.none, .minimized, .appHidden])
+    }
+
+    @Test("Una Window minimizada de una App oculta se marca como minimizada")
+    func minimizedWinsOverAppHidden() {
+        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true, appHidden: true)])
+        guard case .showSwitcher(let content)? = holdHotkey(&c).first else { Issue.record("sin Switcher"); return }
+        #expect(content.items.map(\.mark) == [.none, .minimized])
+    }
+
+    @Test("Con las Minimized desactivadas no aparecen, pero las de Hidden Apps sí")
+    func minimizedOff() {
+        #expect(shownItems(.init(includesMinimizedWindows: false)).map(\.id) == [.window(WindowID(1)), .window(WindowID(3))])
+    }
+
+    @Test("Con las Hidden Apps desactivadas no aparecen, pero las Minimized sí")
+    func hiddenOff() {
+        #expect(shownItems(.init(includesHiddenApps: false)).map(\.id) == [.window(WindowID(1)), .window(WindowID(2))])
     }
 }
