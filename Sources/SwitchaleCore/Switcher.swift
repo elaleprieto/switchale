@@ -22,8 +22,8 @@ public enum SwitcherEvent: Sendable, Equatable {
     case activationFailed(WindowID)
     case snapshot(Snapshot)
     case configChanged(SwitcherConfig)
-    /// La vista informa cuántas columnas tiene la grilla del Window Switcher (al mostrarse, al
-    /// actualizarse y cuando cambia el layout).
+    /// La vista informa cuántas columnas tiene la grilla del Window Switcher (al mostrarse y cuando
+    /// cambian). Un valor menor que 1 se ignora.
     case switcherColumnsChanged(Int)
     /// Clic en la celda de esta Window en el Window Switcher.
     case windowClicked(WindowID)
@@ -71,6 +71,18 @@ public struct SwitcherItem: Sendable, Equatable {
     }
 }
 
+/// Hacia dónde se mueve la selección del Window Switcher.
+enum Direction {
+    /// El ítem anterior (⇧⇥, ←), con vuelta al final.
+    case previous
+    /// El ítem siguiente (⇥, →), con vuelta al principio.
+    case next
+    /// Una fila arriba (↑), sin vuelta.
+    case up
+    /// Una fila abajo (↓), sin vuelta.
+    case down
+}
+
 public struct SwitcherState: Sendable {
     var config: SwitcherConfig
     var snapshot = Snapshot(windows: [], apps: [], currentScreen: ScreenID(0))
@@ -90,6 +102,7 @@ public struct SwitcherState: Sendable {
         /// La Switch Session arrancó con ⌘⇧⇥.
         let startsBackwards: Bool
         /// Columnas de la grilla del Window Switcher, según la vista; nil hasta que las informe.
+        /// Siempre mayor que 0: se valida al recibir `switcherColumnsChanged`.
         var columns: Int?
 
         init(windows: [WindowID], startsBackwards: Bool) {
@@ -134,26 +147,42 @@ public struct SwitcherState: Sendable {
             return closingEffects + [.activate(target)]
         }
 
-        mutating func move(by offset: Int) {
-            guard !windows.isEmpty else { return }
-            select(((selected + offset) % windows.count + windows.count) % windows.count)
+        /// Mueve la selección y devuelve si quedó en un ítem. Anterior y siguiente dan la vuelta en
+        /// los extremos; arriba y abajo no.
+        mutating func move(_ direction: Direction) -> Bool {
+            switch direction {
+            case .previous: return step(by: -1)
+            case .next: return step(by: 1)
+            case .up: return moveUp()
+            case .down: return moveDown()
+            }
         }
 
-        /// Mueve la selección una fila según las columnas que informó la vista, sin dar la vuelta.
-        /// Si ↓ cae en una columna que no existe en la última fila (incompleta), va al último ítem.
-        /// Devuelve false si no se movió.
-        mutating func moveRow(down: Bool) -> Bool {
-            guard let columns, columns > 0, !windows.isEmpty else { return false }
-            let lastRow = (windows.count - 1) / columns
-            let row = selected / columns
-            if down {
-                guard row < lastRow else { return false }
-                select(min(selected + columns, windows.count - 1))
-            } else {
-                guard row > 0 else { return false }
-                select(selected - columns)
-            }
+        private mutating func step(by offset: Int) -> Bool {
+            guard !windows.isEmpty else { return false }
+            select(((selected + offset) % windows.count + windows.count) % windows.count)
             return true
+        }
+
+        /// Sube una fila según las columnas que informó la vista; en la primera fila no se mueve.
+        private mutating func moveUp() -> Bool {
+            guard let columns, selected >= columns else { return false }
+            select(selected - columns)
+            return true
+        }
+
+        /// Baja una fila según las columnas que informó la vista; en la última fila no se mueve.
+        /// Si cae en una columna que no existe en la última fila (incompleta), va al último ítem.
+        private mutating func moveDown() -> Bool {
+            guard let columns, selected / columns < (windows.count - 1) / columns else { return false }
+            select(min(selected + columns, windows.count - 1))
+            return true
+        }
+
+        /// Los efectos de una tecla que mueve la selección: se consume siempre, y el Window Switcher
+        /// visible marca la nueva selección si se movió.
+        func selectionEffects(moved: Bool) -> [SwitcherEffect] {
+            moved && isSwitcherVisible ? [.consumeEvent, .selectItem(selected)] : [.consumeEvent]
         }
 
         private mutating func select(_ index: Int) {
@@ -203,26 +232,21 @@ public struct SwitcherCore: Sendable {
             next.heldKeys.insert(.escape)
             return (next, [.consumeEvent] + session.closingEffects)
 
-        case .keyDown(let key, _, _) where arrowKeys.contains(key):
-            // Las flechas solo se consumen con el Window Switcher visible; si no, pasan a la App.
-            guard var session = next.session, session.isSwitcherVisible else { return (next, []) }
-            next.heldKeys.insert(key)
-            let moved: Bool
-            switch key {
-            case .leftArrow: session.move(by: -1); moved = true
-            case .rightArrow: session.move(by: 1); moved = true
-            default: moved = session.moveRow(down: key == .downArrow)
-            }
-            next.session = session
-            return (next, moved ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
-
         case .keyDown(let key, let modifiers, let isRepeat):
+            if let direction = arrowDirections[key] {
+                // Las flechas solo se consumen con el Window Switcher visible; si no, pasan a la App.
+                guard var session = next.session, session.isSwitcherVisible else { return (next, []) }
+                next.heldKeys.insert(key)
+                let moved = session.move(direction)
+                next.session = session
+                return (next, session.selectionEffects(moved: moved))
+            }
             guard isQuickSwitchHotkey(key, modifiers), next.config.allWindowsEnabled else { return (next, []) }
             next.heldKeys.insert(key)
             if var session = next.session {
-                session.move(by: modifiers.contains(.shift) ? -1 : 1)
+                let moved = session.move(modifiers.contains(.shift) ? .previous : .next)
                 next.session = session
-                return (next, session.isSwitcherVisible ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
+                return (next, session.selectionEffects(moved: moved))
             }
             guard !isRepeat else { return (next, [.consumeEvent]) }
             next.session = .init(windows: eligibleWindows(next), startsBackwards: modifiers.contains(.shift))
@@ -279,12 +303,17 @@ public struct SwitcherCore: Sendable {
             return (next, [])
 
         case .switcherColumnsChanged(let columns):
+            // Una grilla sin columnas no existe: se ignora y quedan las anteriores.
+            guard columns > 0 else { return (next, []) }
             next.session?.columns = columns
             return (next, [])
         }
     }
 
-    private static let arrowKeys: Set<KeyCode> = [.leftArrow, .rightArrow, .upArrow, .downArrow]
+    /// ← y → se mueven como ⇧⇥ y ⇥; ↑ y ↓, una fila de la grilla.
+    private static let arrowDirections: [KeyCode: Direction] = [
+        .leftArrow: .previous, .rightArrow: .next, .upArrow: .up, .downArrow: .down,
+    ]
 
     /// ⌘⇥ y ⌘⇧⇥: abren la Switch Session; dentro de ella, avanzan o retroceden la selección.
     private static func isQuickSwitchHotkey(_ key: KeyCode, _ modifiers: Modifiers) -> Bool {

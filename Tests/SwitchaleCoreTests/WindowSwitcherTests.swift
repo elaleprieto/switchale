@@ -242,7 +242,7 @@ func gridSession(_ count: Int, columns: Int, selected: Int) -> SwitcherCore {
 }
 
 /// Aprieta una tecla con ⌘ mantenido.
-func press(_ key: KeyCode, _ c: inout SwitcherCore) -> [SwitcherEffect] {
+func pressHoldingCommand(_ key: KeyCode, _ c: inout SwitcherCore) -> [SwitcherEffect] {
     c.send(.keyDown(key, [.command], isRepeat: false))
 }
 
@@ -251,28 +251,28 @@ struct WindowSwitcherHorizontalArrowTests {
     @Test("→ avanza un ítem, como ⇥, y da la vuelta al final")
     func rightWraps() {
         var c = gridSession(3, columns: 3, selected: 1)
-        #expect(press(.rightArrow, &c) == [.consumeEvent, .selectItem(2)])
-        #expect(press(.rightArrow, &c) == [.consumeEvent, .selectItem(0)])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [.consumeEvent, .selectItem(0)])
     }
 
     @Test("← retrocede un ítem, como ⇧⇥, y da la vuelta al principio")
     func leftWraps() {
         var c = gridSession(3, columns: 3, selected: 1)
-        #expect(press(.leftArrow, &c) == [.consumeEvent, .selectItem(0)])
-        #expect(press(.leftArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.leftArrow, &c) == [.consumeEvent, .selectItem(0)])
+        #expect(pressHoldingCommand(.leftArrow, &c) == [.consumeEvent, .selectItem(2)])
     }
 
     @Test("← y → avanzan por ítem y cruzan de fila")
     func horizontalCrossesRows() {
         var c = gridSession(5, columns: 2, selected: 1)
-        #expect(press(.rightArrow, &c) == [.consumeEvent, .selectItem(2)])
-        #expect(press(.leftArrow, &c) == [.consumeEvent, .selectItem(1)])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.leftArrow, &c) == [.consumeEvent, .selectItem(1)])
     }
 
     @Test("Soltar el modificador después de mover con flechas activa la Window seleccionada")
     func releaseAfterArrows() {
         var c = gridSession(3, columns: 3, selected: 1)
-        _ = press(.rightArrow, &c)
+        _ = pressHoldingCommand(.rightArrow, &c)
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
     }
 
@@ -294,52 +294,52 @@ struct WindowSwitcherVerticalArrowTests {
     @Test("↓ baja una fila según las columnas informadas")
     func downMovesOneRow() {
         var c = gridSession(7, columns: 3, selected: 1)
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(4)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(4)])
     }
 
     @Test("↑ sube una fila según las columnas informadas")
     func upMovesOneRow() {
         var c = gridSession(7, columns: 3, selected: 5)
-        #expect(press(.upArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent, .selectItem(2)])
     }
 
     @Test("En la primera fila ↑ no da la vuelta: no mueve la selección, pero se consume")
     func upOnFirstRow() {
         var c = gridSession(7, columns: 3, selected: 1)
-        #expect(press(.upArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent])
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
     }
 
     @Test("En la última fila ↓ no da la vuelta: no mueve la selección, pero se consume")
     func downOnLastRow() {
         var c = gridSession(7, columns: 3, selected: 6)
-        #expect(press(.downArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
     }
 
     @Test("Si ↓ apunta a una columna que no existe en la última fila incompleta, va al último ítem")
     func downIntoIncompleteRow() {
         var c = gridSession(7, columns: 3, selected: 5)
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(6)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(6)])
         c = gridSession(8, columns: 3, selected: 5)
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(7)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(7)])
     }
 
     @Test("Si ↓ apunta a una columna que existe en la última fila incompleta, va a esa columna")
     func downIntoExistingColumnOfLastRow() {
         var c = gridSession(7, columns: 3, selected: 3)
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(6)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(6)])
         c = gridSession(8, columns: 3, selected: 4)
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(7)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(7)])
     }
 
     @Test("Con 1 columna, ↑ y ↓ se mueven de a un ítem sin dar la vuelta")
     func oneColumn() {
         var c = gridSession(3, columns: 1, selected: 1)
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(2)])
-        #expect(press(.downArrow, &c) == [.consumeEvent])
-        #expect(press(.upArrow, &c) == [.consumeEvent, .selectItem(1)])
-        #expect(press(.upArrow, &c) == [.consumeEvent, .selectItem(0)])
-        #expect(press(.upArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent, .selectItem(1)])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent, .selectItem(0)])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent])
     }
 
     @Test("Con 2 columnas y la última fila incompleta, ↓ desde la columna derecha va al último ítem")
@@ -348,30 +348,38 @@ struct WindowSwitcherVerticalArrowTests {
         // 2 3
         // 4
         var c = gridSession(5, columns: 2, selected: 1)
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(3)])
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(4)])
-        #expect(press(.upArrow, &c) == [.consumeEvent, .selectItem(2)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(3)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(4)])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent, .selectItem(2)])
     }
 
     @Test("Con todos los ítems en una sola fila, ↑ y ↓ no mueven la selección")
     func singleRow() {
         var c = gridSession(4, columns: 6, selected: 1)
-        #expect(press(.downArrow, &c) == [.consumeEvent])
-        #expect(press(.upArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.upArrow, &c) == [.consumeEvent])
     }
 
     @Test("Si la vista informa otras columnas (cambió el layout), ↑ y ↓ usan las nuevas")
     func columnsChange() {
         var c = gridSession(7, columns: 3, selected: 1)
         _ = c.send(.switcherColumnsChanged(2))
-        #expect(press(.downArrow, &c) == [.consumeEvent, .selectItem(3)])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(3)])
+    }
+
+    @Test("Si la vista informa 0 columnas o menos, se ignora y ↑ y ↓ usan las anteriores")
+    func invalidColumnsIgnored() {
+        var c = gridSession(7, columns: 3, selected: 1)
+        _ = c.send(.switcherColumnsChanged(0))
+        _ = c.send(.switcherColumnsChanged(-2))
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent, .selectItem(4)])
     }
 
     @Test("Mientras la vista no informó columnas, ↑ y ↓ no mueven la selección")
     func noColumnsYet() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         holdHotkey(&c)
-        #expect(press(.downArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
     }
 
     @Test("Las columnas informadas en una Switch Session no pasan a la siguiente")
@@ -379,7 +387,7 @@ struct WindowSwitcherVerticalArrowTests {
         var c = gridSession(3, columns: 1, selected: 1)
         _ = c.send(.modifiersChanged([]))
         holdHotkey(&c)
-        #expect(press(.downArrow, &c) == [.consumeEvent])
+        #expect(pressHoldingCommand(.downArrow, &c) == [.consumeEvent])
     }
 }
 
@@ -388,7 +396,7 @@ struct WindowSwitcherArrowPassThroughTests {
     @Test("Sin Switch Session, las flechas pasan a la App")
     func noSession() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
-        #expect(press(.rightArrow, &c) == [])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [])
         #expect(c.send(.keyDown(.downArrow, [], isRepeat: false)) == [])
         #expect(c.send(.keyUp(.downArrow)) == [])
     }
@@ -397,7 +405,7 @@ struct WindowSwitcherArrowPassThroughTests {
     func beforeDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
-        #expect(press(.rightArrow, &c) == [])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [])
         #expect(c.send(.keyUp(.rightArrow)) == [])
         #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(2))])
     }
@@ -406,7 +414,7 @@ struct WindowSwitcherArrowPassThroughTests {
     func noItems() {
         var c = core([])
         holdHotkey(&c)
-        #expect(press(.rightArrow, &c) == [])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [])
     }
 }
 
@@ -423,7 +431,7 @@ struct WindowSwitcherClickTests {
         var c = gridSession(3, columns: 3, selected: 1)
         _ = c.send(.windowClicked(WindowID(1)))
         #expect(c.send(.modifiersChanged([])) == [])
-        #expect(press(.rightArrow, &c) == [])
+        #expect(pressHoldingCommand(.rightArrow, &c) == [])
     }
 
     @Test("El keyUp de ⇥ que llega después del clic se consume")
