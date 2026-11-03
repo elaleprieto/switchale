@@ -13,6 +13,7 @@ struct WindowActivator {
         if axIsMinimized(element) {
             AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
+        // Hidden App: se muestra la App y el Raise de abajo deja al frente solo esta Window.
         if app.isHidden { app.unhide() }
 
         AXUIElementPerformAction(element, kAXRaiseAction as CFString)

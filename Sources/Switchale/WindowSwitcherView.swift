@@ -82,7 +82,7 @@ final class WindowSwitcherView {
             let y = size.height - Metrics.padding - CGFloat(row + 1) * cell.height - CGFloat(row) * Metrics.spacing
 
             let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
-            view.configure(title: item.title, icon: Self.icon(for: item.appID))
+            view.configure(title: item.title, icon: Self.icon(for: item.appID), isMinimized: item.isMinimized, isAppHidden: item.isAppHidden)
             view.isSelected = index == content.selected
             background.addSubview(view)
             return view
@@ -101,6 +101,8 @@ final class WindowSwitcherView {
 private enum Metrics {
     static let cellSize = NSSize(width: 132, height: 124)
     static let iconSize: CGFloat = 72
+    static let markerSize: CGFloat = 24
+    static let markedIconAlpha: CGFloat = 0.5
     static let spacing: CGFloat = 8
     static let padding: CGFloat = 20
     static let cornerRadius: CGFloat = 18
@@ -122,6 +124,7 @@ private enum Metrics {
 private final class SwitcherCell: NSView {
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    private let markerView = NSImageView()
 
     var isSelected = false {
         didSet { needsDisplay = true }
@@ -144,6 +147,15 @@ private final class SwitcherCell: NSView {
         )
         addSubview(iconView)
 
+        markerView.contentTintColor = .secondaryLabelColor
+        markerView.frame = NSRect(
+            x: iconView.frame.maxX - Metrics.markerSize / 2,
+            y: iconView.frame.minY - Metrics.markerSize / 4,
+            width: Metrics.markerSize, height: Metrics.markerSize
+        )
+        markerView.isHidden = true
+        addSubview(markerView)
+
         label.alignment = .center
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
@@ -161,10 +173,16 @@ private final class SwitcherCell: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) no se usa") }
 
-    func configure(title: String, icon: NSImage?) {
+    func configure(title: String, icon: NSImage?, isMinimized: Bool, isAppHidden: Bool) {
+        // Marca visual: ícono atenuado y un símbolo en la esquina (minimizada u oculta).
+        let marker = isMinimized ? "minus.circle.fill" : (isAppHidden ? "eye.slash.fill" : nil)
+        let note = isMinimized ? " (minimizada)" : (isAppHidden ? " (App oculta)" : "")
         label.stringValue = title
-        label.toolTip = title
+        label.toolTip = title + note
         iconView.image = icon
+        iconView.alphaValue = marker == nil ? 1 : Metrics.markedIconAlpha
+        markerView.image = marker.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: note) }
+        markerView.isHidden = marker == nil
     }
 
     override var wantsUpdateLayer: Bool { true }
