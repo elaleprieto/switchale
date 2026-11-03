@@ -70,20 +70,27 @@ public struct SwitcherState: Sendable {
         /// Windows de la Switch Session, en Recency Order.
         var items: [WindowID]
         var selected: Int
+        /// La Switch Session arrancó con ⌘⇧⇥.
+        let startsBackwards: Bool
 
-        init(items: [WindowID]) {
+        init(items: [WindowID], startsBackwards: Bool) {
             self.items = items
-            selected = Self.initialSelection(items)
+            self.startsBackwards = startsBackwards
+            selected = Self.initialSelection(items, backwards: startsBackwards)
         }
 
-        /// El segundo ítem en Recency Order (un Quick Switch), o el único si hay uno solo.
-        private static func initialSelection(_ items: [WindowID]) -> Int { items.count >= 2 ? 1 : 0 }
+        /// Con ⌘⇥, el segundo ítem en Recency Order (un Quick Switch); con ⌘⇧⇥, el último.
+        /// Si hay uno solo, ese.
+        private static func initialSelection(_ items: [WindowID], backwards: Bool) -> Int {
+            if backwards { return max(0, items.count - 1) }
+            return items.count >= 2 ? 1 : 0
+        }
 
         /// Cambian las Windows: la selección sigue a su Window; si esa se fue, queda en la misma
         /// posición (o en la última, si la grilla se achicó).
         mutating func replaceItems(with newItems: [WindowID]) {
             if items.isEmpty {
-                selected = Self.initialSelection(newItems)
+                selected = Self.initialSelection(newItems, backwards: startsBackwards)
             } else if let window = selectedWindow, let index = newItems.firstIndex(of: window) {
                 selected = index
             } else {
@@ -141,7 +148,7 @@ public struct SwitcherCore: Sendable {
                 return (next, session.isPanelVisible ? [.consumeEvent, .selectItem(session.selected)] : [.consumeEvent])
             }
             guard !isRepeat else { return (next, [.consumeEvent]) }
-            next.session = .init(items: eligibleWindows(next))
+            next.session = .init(items: eligibleWindows(next), startsBackwards: modifiers.contains(.shift))
             return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelayMilliseconds)])
 
         case .keyUp(let key):

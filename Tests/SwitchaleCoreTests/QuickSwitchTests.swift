@@ -62,6 +62,14 @@ struct QuickSwitchTests {
         #expect(c.send(.keyDown(.tab, [.command, .shift], isRepeat: false)).contains(.consumeEvent))
     }
 
+    @Test("Tocar y soltar ⌘⇧⇥ activa la última Window en Recency Order")
+    func shiftTabQuickSwitch() {
+        var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
+        _ = c.send(.keyDown(.tab, [.command, .shift], isRepeat: false))
+        _ = c.send(.keyUp(.tab))
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(3))])
+    }
+
     @Test("Otras combinaciones con ⇥ pasan al sistema")
     func otherCombos() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])

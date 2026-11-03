@@ -20,6 +20,14 @@ struct WindowSwitcherPanelTests {
         #expect(holdHotkey(&c) == [.showPanel([item(1), item(2), item(3)], selected: 1)])
     }
 
+    @Test("Si la Switch Session arranca con ⌘⇧⇥, la selección empieza en el último ítem")
+    func shiftTabStartsAtLast() {
+        var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
+        _ = c.send(.keyDown(.tab, [.command, .shift], isRepeat: false))
+        #expect(c.send(.activationDelayElapsed) == [.showPanel([item(1), item(2), item(3)], selected: 2)])
+        #expect(c.send(.keyDown(.tab, [.command, .shift], isRepeat: false)) == [.consumeEvent, .selectItem(1)])
+    }
+
     @Test("Con un toque rápido no se muestra ni se oculta el panel")
     func quickSwitchHasNoPanel() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
