@@ -1,11 +1,6 @@
 import Testing
 import SwitchaleCore
 
-private func shownIDs(_ effects: [SwitcherEffect]) -> [ItemID]? {
-    for case .showSwitcher(let content) in effects { return content.items.map(\.id) }
-    return nil
-}
-
 @Suite("Windows de otros Spaces")
 struct OtherSpacesTests {
     private let windows = [
@@ -49,6 +44,13 @@ struct OtherSpacesTests {
             win(1, stack: 0), win(2, stack: 1, inSpace: false), win(3, stack: 2, screen: otherScreen, inSpace: false),
         ], config: .init(includesOtherScreens: false, includesOtherSpaces: true))
         #expect(shownIDs(holdHotkey(&c)) == [.window(WindowID(1)), .window(WindowID(2))])
+    }
+
+    @Test("Con la opción activada, si el adaptador no pudo ubicar las Windows de otros Spaces en la foto, se comporta como desactivada")
+    func behavesAsDisabledWhenSnapshotDoesNotLocateOtherSpaces() {
+        var c = SwitcherCore(config: .init(includesOtherSpaces: true))
+        _ = c.send(.snapshot(snapshot(windows, locatesOtherSpaces: false)))
+        #expect(shownIDs(holdHotkey(&c)) == [.window(WindowID(1)), .window(WindowID(3))])
     }
 
     @Test("Activar la opción se aplica a la siguiente Switch Session")

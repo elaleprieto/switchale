@@ -486,13 +486,14 @@ public struct SwitcherCore: Sendable {
 
     /// Las Windows del Scope en Recency Order. Current App: solo las de la App activa.
     /// Reglas de inclusión: otros Spaces, otras pantallas, Minimized y Hidden Apps según la
-    /// configuración.
+    /// configuración (otros Spaces, solo si la foto los ubicó).
     private static func eligibleWindows(_ state: SwitcherState, _ scope: Scope) -> [WindowID] {
         let windowsByID = state.snapshot.windowsByID
+        let includesOtherSpaces = state.config.includesOtherSpaces && state.snapshot.locatesOtherSpaces
         return state.recency.compactMap { id in
             guard let window = windowsByID[id],
                   scope == .allWindows || window.appID == state.activeApp,
-                  state.config.includesOtherSpaces || window.isInCurrentSpace,
+                  includesOtherSpaces || window.isInCurrentSpace,
                   state.config.includesOtherScreens || window.screen == state.snapshot.currentScreen,
                   state.config.includesMinimizedWindows || !window.isMinimized,
                   state.config.includesHiddenApps || !window.isAppHidden

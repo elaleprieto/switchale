@@ -14,10 +14,10 @@ func win(
 }
 
 /// Foto con las Windows dadas, la Window con foco, las pantallas y las Windowless Apps
-/// indicadas (por id de App).
+/// indicadas (por id de App). Salvo que se indique, el adaptador ubicó las Windows de otros Spaces.
 func snapshot(
     _ windows: [Window], focused: Int? = nil, mouse: ScreenID = mainScreen, primary: ScreenID = mainScreen,
-    windowless: [Int] = []
+    windowless: [Int] = [], locatesOtherSpaces: Bool = true
 ) -> Snapshot {
     let appIDs = Set(windows.map(\.appID)).union(windowless.map { AppID($0) })
     return Snapshot(
@@ -25,7 +25,8 @@ func snapshot(
         apps: appIDs.map { AppInfo(id: $0, name: "app\($0.rawValue)") },
         focusedWindow: focused.map(WindowID.init),
         screens: Screens(mouse: mouse, primary: primary),
-        windowlessApps: windowless.map { AppID($0) }
+        windowlessApps: windowless.map { AppID($0) },
+        locatesOtherSpaces: locatesOtherSpaces
     )
 }
 
@@ -58,4 +59,15 @@ let visibleOnly = SwitcherConfig(includesMinimizedWindows: false, includesHidden
 /// La foto que pide la Switch Session al arrancar, con las mismas Windows que la anterior.
 func deliverFreshSnapshot(_ core: inout SwitcherCore) {
     _ = core.send(.snapshot(core.state.snapshot))
+}
+
+/// Lo que muestra el Window Switcher según estos efectos, si alguno lo muestra.
+func shownContent(_ effects: [SwitcherEffect]) -> SwitcherContent? {
+    for case .showSwitcher(let content) in effects { return content }
+    return nil
+}
+
+/// Los ítems que muestra el Window Switcher según estos efectos, en orden.
+func shownIDs(_ effects: [SwitcherEffect]) -> [ItemID]? {
+    shownContent(effects)?.items.map(\.id)
 }

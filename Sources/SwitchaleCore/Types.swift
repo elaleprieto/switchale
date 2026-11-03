@@ -181,16 +181,21 @@ public struct Snapshot: Sendable, Equatable {
     /// Apps regulares en ejecución que el adaptador no encontró con ninguna Window. El núcleo
     /// descarta las que sí tienen una Window en la foto.
     public var windowlessApps: [AppID]
+    /// Si el adaptador pudo ubicar en esta foto qué Windows son de otros Spaces (necesita APIs
+    /// privadas, ADR-0002). Si no, el núcleo se comporta como con "Windows de otros Spaces"
+    /// desactivada.
+    public var locatesOtherSpaces: Bool
 
     public init(
         windows: [Window], apps: [AppInfo], focusedWindow: WindowID?, screens: Screens,
-        windowlessApps: [AppID] = []
+        windowlessApps: [AppID] = [], locatesOtherSpaces: Bool = false
     ) {
         self.windows = windows
         self.apps = apps
         self.focusedWindow = focusedWindow
         self.screens = screens
         self.windowlessApps = windowlessApps
+        self.locatesOtherSpaces = locatesOtherSpaces
     }
 
     /// La pantalla de la Window con foco; nil si no hay una o no está en la foto.
