@@ -7,19 +7,18 @@ final class Orchestrator {
     /// Cada cuánto se refresca la foto mientras el Window Switcher está visible.
     private static let switcherRefreshInterval: TimeInterval = 0.5
 
-    /// La configuración vigente, de `SwitcherPreferences`; al cambiarla se avisa al núcleo y se
-    /// actualiza la vista.
+    /// La configuración vigente, de `SwitcherPreferences`; al cambiarla se avisa al núcleo, que la
+    /// aplica desde la próxima Switch Session.
     private var config = SwitcherPreferences.load() {
-        didSet {
-            switcherView.thumbnailSize = config.thumbnailSize
-            dispatch(.configChanged(config))
-        }
+        didSet { dispatch(.configChanged(config)) }
     }
     private lazy var core = SwitcherCore(config: config)
     /// Thumbnails por Window; el núcleo decide qué capturar y cuándo, ScreenCaptureKit captura.
     private var thumbnails = ThumbnailCache<ThumbnailImage>()
     /// Windows que muestra el Window Switcher ahora.
     private var visibleWindows: [WindowID] = []
+    /// Tamaño de las Thumbnails de la Switch Session en curso, el que manda el núcleo.
+    private var visibleThumbnailSize = ThumbnailSize()
     private lazy var source = WindowSource { [weak self] snapshot in self?.dispatch(.snapshot(snapshot)) }
     private let activator = WindowActivator()
     private lazy var switcherView = WindowSwitcherView(
@@ -34,7 +33,7 @@ final class Orchestrator {
     private var focus: FocusTracker?
     private var defaultsObserver: NSObjectProtocol?
 
-    /// Asignar `config` ya avisa al núcleo y a la vista.
+    /// Asignar `config` ya avisa al núcleo.
     private func reloadConfig() {
         let loaded = SwitcherPreferences.load()
         guard loaded != config else { return }
@@ -62,7 +61,6 @@ final class Orchestrator {
             focus.reportActivation(of: front)
         }
 
-        switcherView.thumbnailSize = config.thumbnailSize
         switcherView.thumbnailProvider = { [weak self] id in self?.thumbnails.image(for: id)?.cgImage }
 
         let tap = EventTap { [weak self] event in self?.dispatch(event) ?? false }
@@ -123,6 +121,7 @@ final class Orchestrator {
         visibleWindows = content.items.compactMap { item in
             if case .window(let window) = item.id { window } else { nil }
         }
+        visibleThumbnailSize = content.thumbnailSize
         requestThumbnails()
     }
 
@@ -144,7 +143,7 @@ final class Orchestrator {
         if thumbnails.updatePermission(screenRecording: SystemPermissions.current().screenRecording) {
             switcherView.thumbnailsDiscarded()
         }
-        let size = config.thumbnailSize
+        let size = visibleThumbnailSize
         let toCapture = thumbnails.windowsToCapture(among: visibleWindows, size: size, now: now)
         toCapture.forEach { thumbnails.markCapturing($0) }
         let scale = NSScreen.main?.backingScaleFactor ?? 2

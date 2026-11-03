@@ -35,4 +35,10 @@ struct LaunchAtLoginTests {
     func nothingWhenUnwantedAndMissing(status: LoginItemStatus) {
         #expect(LaunchAtLogin.action(wanted: false, status: status) == nil)
     }
+
+    @Test("El login item está registrado si macOS lo tiene activo o esperando la aprobación del usuario",
+          arguments: [(LoginItemStatus.enabled, true), (.requiresApproval, true), (.notRegistered, false), (.notFound, false)])
+    func isRegistered(status: LoginItemStatus, registered: Bool) {
+        #expect(status.isRegistered == registered)
+    }
 }

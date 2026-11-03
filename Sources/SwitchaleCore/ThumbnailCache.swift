@@ -6,9 +6,24 @@ public struct ThumbnailSize: Sendable, Equatable {
     public var width: Int
     public var height: Int
 
+    /// Los anchos configurables; el por defecto (160) es el intermedio.
+    public static let widthRange = 96...224
+    /// El ancho configurable va de a tantos puntos desde `widthRange.lowerBound`.
+    public static let widthStep = 16
+
     public init(width: Int = 160, height: Int = 100) {
         self.width = width
         self.height = height
+    }
+
+    /// El tamaño configurable más cercano a este ancho: dentro de `widthRange`, de a `widthStep`,
+    /// con la proporción 16:10 del tamaño por defecto.
+    public init(width: Int) {
+        let range = Self.widthRange
+        let clamped = min(max(width, range.lowerBound), range.upperBound)
+        let steps = (Double(clamped - range.lowerBound) / Double(Self.widthStep)).rounded()
+        let stepped = range.lowerBound + Int(steps) * Self.widthStep
+        self.init(width: stepped, height: stepped * 10 / 16)
     }
 }
 

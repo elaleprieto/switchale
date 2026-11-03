@@ -6,6 +6,10 @@ public enum LoginItemStatus: Sendable, Equatable {
     case enabled
     case requiresApproval
     case notFound
+
+    /// Si el login item está registrado: activo, o esperando que el usuario lo apruebe en
+    /// Configuración del Sistema.
+    public var isRegistered: Bool { self == .enabled || self == .requiresApproval }
 }
 
 /// Qué hacer con el login item para que coincida con lo que quiere el usuario.

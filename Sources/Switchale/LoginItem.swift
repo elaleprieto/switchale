@@ -9,10 +9,33 @@ enum LoginItem {
     /// Clave de la preferencia "iniciar al loguearse" en `UserDefaults`.
     static let preferenceKey = "launchAtLogin"
 
+    /// La preferencia del usuario (por defecto, activado).
+    static func isWanted(defaults: UserDefaults = .standard) -> Bool {
+        defaults.register(defaults: [preferenceKey: LaunchAtLogin.enabledByDefault])
+        return defaults.bool(forKey: preferenceKey)
+    }
+
+    /// El estado del login item según macOS. Es lo que muestra Preferencias: si registrarlo o
+    /// quitarlo falla, difiere de la preferencia del usuario.
+    static func status() -> LoginItemStatus {
+        status(of: SMAppService.mainApp)
+    }
+
+    /// Guarda la preferencia (toggle de Preferencias) y registra o quita el login item.
+    static func setWanted(_ wanted: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(wanted, forKey: preferenceKey)
+        sync(defaults: defaults)
+    }
+
+    /// Vuelve la preferencia a su valor por defecto y alinea el login item.
+    static func restoreDefault(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: preferenceKey)
+        sync(defaults: defaults)
+    }
+
     /// Alinea el login item con la preferencia del usuario (por defecto, activado).
     static func sync(defaults: UserDefaults = .standard) {
-        defaults.register(defaults: [preferenceKey: LaunchAtLogin.enabledByDefault])
-        let wanted = defaults.bool(forKey: preferenceKey)
+        let wanted = isWanted(defaults: defaults)
         let service = SMAppService.mainApp
 
         guard let action = LaunchAtLogin.action(wanted: wanted, status: status(of: service)) else {

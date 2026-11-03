@@ -28,7 +28,7 @@ struct CurrentAppScopeTests {
         _ = c.send(.windowFocused(WindowID(4)))
         _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
         deliverFreshSnapshot(&c)
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(4), item(1), item(3)], selected: 1, screen: mainScreen))])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(4), item(1), item(3)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(1))])
     }
 
@@ -38,7 +38,7 @@ struct CurrentAppScopeTests {
         _ = c.send(.appActivated(AppID(2)))
         _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
         deliverFreshSnapshot(&c)
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(2, app: 2), item(4, app: 2)], selected: 1, screen: mainScreen))])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(2, app: 2), item(4, app: 2)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
     }
 
     @Test("El foco de una Window fija la App activa en la App de esa Window, aunque no haya llegado la activación de la App")
@@ -47,7 +47,7 @@ struct CurrentAppScopeTests {
         _ = c.send(.windowFocused(WindowID(3)))
         _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
         deliverFreshSnapshot(&c)
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(3, app: 2), item(2, app: 2)], selected: 1, screen: mainScreen))])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(3, app: 2), item(2, app: 2)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
     }
 
     @Test("El foco de una Window que no está en la foto no cambia la App activa")
@@ -56,7 +56,7 @@ struct CurrentAppScopeTests {
         _ = c.send(.windowFocused(WindowID(9)))
         _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
         deliverFreshSnapshot(&c)
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(3)], selected: 1, screen: mainScreen))])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(3)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
     }
 
     @Test("Si la App activa no tiene Windows, no aparece en el Scope: no hay Window Switcher ni activación")
@@ -81,6 +81,23 @@ struct CurrentAppScopeTests {
         #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
     }
 
+    @Test("Con switchale como App activa (Preferencias con foco), ⌥` lista sus Windows y alterna entre ellas")
+    func switchaleIsActiveApp() {
+        let switchale = 9
+        var c = core([
+            win(1, app: 1, stack: 2), win(5, app: switchale, stack: 0), win(6, app: switchale, stack: 1),
+        ], activeApp: 1)
+        _ = c.send(.appActivated(AppID(switchale)))
+        _ = c.send(.windowFocused(WindowID(5)))
+        _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
+        deliverFreshSnapshot(&c)
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init(
+            [item(5, app: switchale), item(6, app: switchale)], selected: 1, screen: mainScreen,
+            thumbnailSize: ThumbnailSize()
+        ))])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(6))])
+    }
+
     @Test("La Switch Session de ⌥` termina al soltar ⌥, no ⌘")
     func endsOnOptionRelease() {
         var c = core([win(1, app: 1, stack: 0), win(2, app: 1, stack: 1)], activeApp: 1)
@@ -99,11 +116,11 @@ struct IndependentHotkeysTests {
         var c = core(windows, activeApp: 1)
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
         deliverFreshSnapshot(&c)
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2, app: 2), item(3)], selected: 1, screen: mainScreen))])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2, app: 2), item(3)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
         _ = c.send(.modifiersChanged([]))
         _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
         deliverFreshSnapshot(&c)
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(3)], selected: 1, screen: mainScreen))])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(3)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
     }
 
     @Test("Con All Windows desactivado, ⌘⇥ pasa al sistema y ⌥` sigue funcionando")
@@ -140,5 +157,33 @@ struct IndependentHotkeysTests {
         #expect(c.send(.keyDown(.grave, [], isRepeat: false)) == [])
         #expect(c.send(.keyDown(.grave, [.command], isRepeat: false)) == [])
         #expect(c.send(.keyDown(.grave, [.option, .control], isRepeat: false)) == [])
+    }
+}
+
+@Suite("Hotkeys repetidos entre Scopes")
+struct DuplicateHotkeysTests {
+    let windows = [win(1, app: 1, stack: 0), win(2, app: 2, stack: 1), win(3, app: 1, stack: 2)]
+
+    @Test("El Hotkey del otro Scope no está disponible para un Scope, aunque el otro esté desactivado")
+    func otherScopeHotkeyUnavailable() {
+        let config = SwitcherConfig(enabledScopes: [.currentApp])
+        #expect(!config.isHotkeyAvailable(Hotkey(modifier: .command, key: .tab), for: .currentApp))
+        #expect(!config.isHotkeyAvailable(Hotkey(modifier: .option, key: .grave), for: .allWindows))
+    }
+
+    @Test("Un Hotkey que no usa otro Scope está disponible, también el que ya tiene el Scope")
+    func freeHotkeyAvailable() {
+        let config = SwitcherConfig()
+        #expect(config.isHotkeyAvailable(Hotkey(modifier: .command, key: .grave), for: .currentApp))
+        #expect(config.isHotkeyAvailable(Hotkey(modifier: .option, key: .grave), for: .currentApp))
+    }
+
+    @Test("Si los dos Scopes activados tienen el mismo Hotkey (p. ej. con defaults write), abre All Windows")
+    func allWindowsWins() {
+        var config = SwitcherConfig()
+        config.hotkeys[.currentApp] = Hotkey(modifier: .command, key: .tab)
+        var c = core(windows, config: config, activeApp: 1)
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(2))])
     }
 }
