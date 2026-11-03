@@ -3,19 +3,9 @@ import SwitchaleCore
 
 /// El Window Switcher en pantalla: un `NSPanel` no activante con fondo translúcido y una grilla
 /// centrada que pasa a la siguiente fila cuando no entra. Solo dibuja lo que pide el núcleo;
-/// el teclado lo recibe el event tap, así que el panel nunca toma foco.
+/// el teclado lo recibe el event tap, así que el `NSPanel` nunca toma foco.
 @MainActor
-final class SwitcherPanel {
-    private enum Metrics {
-        static let cellSize = NSSize(width: 132, height: 124)
-        static let iconSize: CGFloat = 72
-        static let spacing: CGFloat = 8
-        static let padding: CGFloat = 20
-        static let cornerRadius: CGFloat = 18
-        /// Fracción del ancho de la pantalla que puede ocupar la grilla antes de pasar a otra fila.
-        static let maxWidthFraction: CGFloat = 0.9
-    }
-
+final class WindowSwitcherView {
     private let panel: NSPanel
     private let background = NSVisualEffectView()
     private var cells: [SwitcherCell] = []
@@ -47,13 +37,13 @@ final class SwitcherPanel {
         panel.contentView = background
     }
 
-    func show(_ items: [SwitcherItem], selected: Int) {
-        layout(items, selected: selected)
+    func show(_ content: SwitcherContent) {
+        layout(content)
         panel.orderFrontRegardless()
     }
 
-    func update(_ items: [SwitcherItem], selected: Int) {
-        layout(items, selected: selected)
+    func update(_ content: SwitcherContent) {
+        layout(content)
     }
 
     func select(_ index: Int) {
@@ -66,7 +56,8 @@ final class SwitcherPanel {
 
     // MARK: - Grilla
 
-    private func layout(_ items: [SwitcherItem], selected: Int) {
+    private func layout(_ content: SwitcherContent) {
+        let items = content.items
         let screen = NSScreen.main ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
@@ -90,9 +81,9 @@ final class SwitcherPanel {
             let x = (size.width - rowWidth) / 2 + CGFloat(column) * (cell.width + Metrics.spacing)
             let y = size.height - Metrics.padding - CGFloat(row + 1) * cell.height - CGFloat(row) * Metrics.spacing
 
-            let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell), iconSize: Metrics.iconSize)
+            let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
             view.configure(title: item.title, icon: Self.icon(for: item.appID))
-            view.isSelected = index == selected
+            view.isSelected = index == content.selected
             background.addSubview(view)
             return view
         }
@@ -106,6 +97,27 @@ final class SwitcherPanel {
     }
 }
 
+/// Medidas del Window Switcher y de sus celdas, en puntos.
+private enum Metrics {
+    static let cellSize = NSSize(width: 132, height: 124)
+    static let iconSize: CGFloat = 72
+    static let spacing: CGFloat = 8
+    static let padding: CGFloat = 20
+    static let cornerRadius: CGFloat = 18
+    /// Fracción del ancho de la pantalla que puede ocupar la grilla antes de pasar a otra fila.
+    static let maxWidthFraction: CGFloat = 0.9
+
+    static let cellCornerRadius: CGFloat = 12
+    /// Margen interno de la celda alrededor del ícono y del título.
+    static let cellInset: CGFloat = 8
+    static let titleHeight: CGFloat = 18
+    static let titleFontSize: CGFloat = 12
+    /// Separación extra entre el borde inferior de la celda y el título.
+    static let titleBottomOffset: CGFloat = 4
+    static let selectionBorderWidth: CGFloat = 2
+    static let selectionFillAlpha: CGFloat = 0.3
+}
+
 /// Una celda de la grilla: el ícono de la App y, debajo, el título de la Window.
 private final class SwitcherCell: NSView {
     private let iconView = NSImageView()
@@ -115,14 +127,14 @@ private final class SwitcherCell: NSView {
         didSet { needsDisplay = true }
     }
 
-    init(frame: NSRect, iconSize: CGFloat) {
+    override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.cornerRadius = 12
-        layer?.borderWidth = 2
+        layer?.cornerRadius = Metrics.cellCornerRadius
+        layer?.borderWidth = Metrics.selectionBorderWidth
 
-        let inset: CGFloat = 8
-        let labelHeight: CGFloat = 18
+        let iconSize = Metrics.iconSize
+        let inset = Metrics.cellInset
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.frame = NSRect(
             x: (frame.width - iconSize) / 2,
@@ -135,9 +147,14 @@ private final class SwitcherCell: NSView {
         label.alignment = .center
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
-        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.font = .systemFont(ofSize: Metrics.titleFontSize, weight: .medium)
         label.textColor = .labelColor
-        label.frame = NSRect(x: inset, y: inset + 4, width: frame.width - 2 * inset, height: labelHeight)
+        label.frame = NSRect(
+            x: inset,
+            y: inset + Metrics.titleBottomOffset,
+            width: frame.width - 2 * inset,
+            height: Metrics.titleHeight
+        )
         addSubview(label)
     }
 
@@ -156,7 +173,7 @@ private final class SwitcherCell: NSView {
     override func updateLayer() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = isSelected
-                ? NSColor.controlAccentColor.withAlphaComponent(0.3).cgColor
+                ? NSColor.controlAccentColor.withAlphaComponent(Metrics.selectionFillAlpha).cgColor
                 : NSColor.clear.cgColor
             layer?.borderColor = isSelected ? NSColor.controlAccentColor.cgColor : NSColor.clear.cgColor
         }

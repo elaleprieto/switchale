@@ -10,19 +10,77 @@ struct WindowHandle {
 
 /// Fuente de Windows: informa los datos de cada Window (Space, pantalla, Minimized, App Hidden);
 /// qué entra en cada Switch Session lo decide el núcleo.
+///
+/// La foto se toma fuera del main thread: ahí corre el event tap, y una foto completa (AX contra
+/// cada App) es lenta y le metería latencia a ⇥/Esc/soltar ⌘, o haría que macOS lo deshabilite por
+/// timeout. Se toma una sola foto a la vez, en orden, y se entrega en el main thread; los pedidos
+/// que llegan mientras tanto se juntan en una foto siguiente, así ninguna foto vieja pisa a una
+/// más nueva.
 @MainActor
 final class WindowSource {
     private(set) var handles: [WindowID: WindowHandle] = [:]
+    private let onSnapshot: (Snapshot) -> Void
+    private let queue = DispatchQueue(label: "com.aleprieto.switchale.window-source", qos: .userInteractive)
+    private var isCapturing = false
+    private var needsAnotherCapture = false
 
-    func snapshot() -> Snapshot {
-        let (cgInfo, onScreenIDs) = Self.cgWindowInfo()
-        let currentScreen = Self.currentScreen()
+    init(onSnapshot: @escaping (Snapshot) -> Void) {
+        self.onSnapshot = onSnapshot
+    }
+
+    /// Pide una foto fresca; llega por `onSnapshot`.
+    func refresh() {
+        guard !isCapturing else {
+            needsAnotherCapture = true
+            return
+        }
+        isCapturing = true
+        // Lo de AppKit (pantalla actual, Apps en ejecución) se lee acá, en el main thread.
+        let input = CaptureInput(
+            apps: NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && !$0.isTerminated },
+            currentScreen: Self.currentScreen()
+        )
+        queue.async { [weak self] in
+            let capture = Self.capture(input)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.deliver(capture) }
+            }
+        }
+    }
+
+    private func deliver(_ capture: Capture) {
+        isCapturing = false
+        handles = capture.handles
+        onSnapshot(capture.snapshot)
+        if needsAnotherCapture {
+            needsAnotherCapture = false
+            refresh()
+        }
+    }
+
+    // MARK: - Foto (fuera del main thread)
+
+    /// `NSRunningApplication` y `AXUIElement` no están marcados `Sendable`, pero AX y las
+    /// propiedades de `NSRunningApplication` se pueden leer desde cualquier hilo.
+    private struct CaptureInput: @unchecked Sendable {
+        let apps: [NSRunningApplication]
+        let currentScreen: ScreenID
+    }
+
+    private struct Capture: @unchecked Sendable {
+        let snapshot: Snapshot
+        let handles: [WindowID: WindowHandle]
+    }
+
+    private nonisolated static func capture(_ input: CaptureInput) -> Capture {
+        let (cgInfo, onScreenIDs) = cgWindowInfo()
+        let currentScreen = input.currentScreen
 
         var windows: [Window] = []
         var apps: [AppInfo] = []
         var newHandles: [WindowID: WindowHandle] = [:]
 
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular && !app.isTerminated {
+        for app in input.apps {
             let appID = AppID(Int(app.processIdentifier))
             apps.append(AppInfo(id: appID, name: app.localizedName ?? ""))
             let appElement = axApplicationElement(pid: app.processIdentifier)
@@ -33,7 +91,7 @@ final class WindowSource {
                 guard let id = axWindowID(element),
                       let entry = cgInfo[id],
                       entry.layer == 0,
-                      Self.isStandardWindow(element)
+                      isStandardWindow(element)
                 else { continue }
 
                 let isMinimized = axIsMinimized(element)
@@ -44,7 +102,7 @@ final class WindowSource {
                     id: id,
                     appID: appID,
                     title: (axAttribute(element, kAXTitleAttribute) as? String) ?? "",
-                    screen: Self.screen(containing: entry.bounds) ?? currentScreen,
+                    screen: screen(containing: entry.bounds) ?? currentScreen,
                     isInCurrentSpace: isInCurrentSpace,
                     isMinimized: isMinimized,
                     isAppHidden: app.isHidden,
@@ -53,8 +111,10 @@ final class WindowSource {
                 newHandles[id] = WindowHandle(element: element, app: app)
             }
         }
-        handles = newHandles
-        return Snapshot(windows: windows, apps: apps, currentScreen: currentScreen)
+        return Capture(
+            snapshot: Snapshot(windows: windows, apps: apps, currentScreen: currentScreen),
+            handles: newHandles
+        )
     }
 
     // MARK: - CGWindowList
@@ -65,7 +125,7 @@ final class WindowSource {
         let bounds: CGRect
     }
 
-    private static func cgWindowInfo() -> ([WindowID: CGEntry], Set<WindowID>) {
+    private nonisolated static func cgWindowInfo() -> ([WindowID: CGEntry], Set<WindowID>) {
         let all = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         var entries: [WindowID: CGEntry] = [:]
@@ -84,7 +144,7 @@ final class WindowSource {
     }
 
     /// Solo subrol estándar o diálogo, de al menos 100×100.
-    private static func isStandardWindow(_ element: AXUIElement) -> Bool {
+    private nonisolated static func isStandardWindow(_ element: AXUIElement) -> Bool {
         let subrole = axAttribute(element, kAXSubroleAttribute) as? String
         guard subrole == kAXStandardWindowSubrole as String || subrole == kAXDialogSubrole as String else { return false }
         var size = CGSize.zero
@@ -106,7 +166,7 @@ final class WindowSource {
     }
 
     /// Pantalla con mayor intersección con `bounds` (coordenadas globales de CoreGraphics).
-    private static func screen(containing bounds: CGRect) -> ScreenID? {
+    private nonisolated static func screen(containing bounds: CGRect) -> ScreenID? {
         var displays = [CGDirectDisplayID](repeating: 0, count: 16)
         var count: UInt32 = 0
         guard CGGetDisplaysWithRect(bounds, 16, &displays, &count) == .success, count > 0 else { return nil }

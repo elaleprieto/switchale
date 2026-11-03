@@ -4,23 +4,26 @@ import SwitchaleCore
 /// Recibe eventos de los adaptadores, los pasa al núcleo y despacha todos sus efectos.
 @MainActor
 final class Orchestrator {
+    /// Cada cuánto se refresca la foto mientras el Window Switcher está visible.
+    private static let switcherRefreshInterval: TimeInterval = 0.5
+
     private var core = SwitcherCore()
-    private let source = WindowSource()
+    private lazy var source = WindowSource { [weak self] snapshot in self?.dispatch(.snapshot(snapshot)) }
     private let activator = WindowActivator()
-    private let panel = SwitcherPanel()
+    private let switcherView = WindowSwitcherView()
     private var activationTimer: Timer?
-    /// Mientras el panel está visible se refresca la foto, para que las Windows que se cierran
-    /// salgan de la grilla.
-    private var panelRefreshTimer: Timer?
+    /// Mientras el Window Switcher está visible se refresca la foto, para que las Windows que se
+    /// cierran salgan de la grilla.
+    private var switcherRefreshTimer: Timer?
     private var tap: EventTap?
     private var focus: FocusTracker?
 
     func start() {
-        refreshSnapshot()
+        source.refresh()
 
         let focus = FocusTracker(
             onFocus: { [weak self] id in self?.dispatch(.windowFocused(id)) },
-            onAppsChanged: { [weak self] in self?.refreshSnapshot() }
+            onAppsChanged: { [weak self] in self?.source.refresh() }
         )
         self.focus = focus
         focus.start()
@@ -31,10 +34,6 @@ final class Orchestrator {
         let tap = EventTap { [weak self] event in self?.dispatch(event) ?? false }
         self.tap = tap
         tap.start()
-    }
-
-    private func refreshSnapshot() {
-        dispatch(.snapshot(source.snapshot()))
     }
 
     /// Envía el evento al núcleo y ejecuta todos sus efectos. Devuelve true si el evento de teclado
@@ -59,36 +58,29 @@ final class Orchestrator {
                     dispatch(.activationFailed(id))
                 }
             case .refreshSnapshot:
-                scheduleSnapshotRefresh()
+                source.refresh()
             case .consumeEvent:
                 consume = true
-            case .showPanel(let items, let selected):
-                panel.show(items, selected: selected)
-                startPanelRefresh()
-            case .updatePanel(let items, let selected):
-                panel.update(items, selected: selected)
+            case .showSwitcher(let content):
+                switcherView.show(content)
+                startSwitcherRefresh()
+            case .updateSwitcher(let content):
+                switcherView.update(content)
             case .selectItem(let index):
-                panel.select(index)
-            case .hidePanel:
-                panel.hide()
-                panelRefreshTimer?.invalidate()
-                panelRefreshTimer = nil
+                switcherView.select(index)
+            case .hideSwitcher:
+                switcherView.hide()
+                switcherRefreshTimer?.invalidate()
+                switcherRefreshTimer = nil
             }
         }
         return consume
     }
 
-    /// Fuera del callback del tap: la foto completa es lenta y el tap tiene timeout.
-    private func scheduleSnapshotRefresh() {
-        DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated { self?.refreshSnapshot() }
-        }
-    }
-
-    private func startPanelRefresh() {
-        panelRefreshTimer?.invalidate()
-        panelRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshSnapshot() }
+    private func startSwitcherRefresh() {
+        switcherRefreshTimer?.invalidate()
+        switcherRefreshTimer = Timer.scheduledTimer(withTimeInterval: Self.switcherRefreshInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.source.refresh() }
         }
     }
 }
