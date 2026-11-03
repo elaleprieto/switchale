@@ -3,7 +3,7 @@ import SwitchaleCore
 
 @Suite("Quick Switch")
 struct QuickSwitchTests {
-    @Test("Tocar y soltar el Hotkey antes del Activation Delay activa la segunda Window, sin panel")
+    @Test("Tocar y soltar el Hotkey antes del Activation Delay activa la segunda Window, sin Window Switcher")
     func quickSwitch() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false))
@@ -26,12 +26,12 @@ struct QuickSwitchTests {
         #expect(quickSwitchTarget(&c) == WindowID(1))
     }
 
-    @Test("Si vence el Activation Delay, soltar oculta el panel, activa la segunda Window y no cancela el temporizador")
+    @Test("Si vence el Activation Delay, soltar oculta el Window Switcher, activa la segunda Window y no cancela el temporizador")
     func afterDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
         _ = c.send(.activationDelayElapsed)
-        #expect(c.send(.modifiersChanged([])) == [.hidePanel, .activate(WindowID(2))])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(2))])
     }
 
     @Test("Con una sola Window, el Quick Switch no activa nada")

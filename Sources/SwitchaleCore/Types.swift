@@ -85,4 +85,8 @@ public struct Snapshot: Sendable, Equatable {
         self.apps = apps
         self.currentScreen = currentScreen
     }
+
+    var windowsByID: [WindowID: Window] {
+        Dictionary(uniqueKeysWithValues: windows.map { ($0.id, $0) })
+    }
 }

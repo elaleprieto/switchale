@@ -12,39 +12,39 @@ func item(_ id: Int, app: Int = 1, title: String? = nil) -> SwitcherItem {
     SwitcherItem(windowID: WindowID(id), appID: AppID(app), title: title ?? "w\(id)")
 }
 
-@Suite("Window Switcher: panel")
-struct WindowSwitcherPanelTests {
-    @Test("Mantener el Hotkey más allá del Activation Delay muestra el panel con la selección en el segundo ítem")
+@Suite("Window Switcher: visibilidad")
+struct WindowSwitcherVisibilityTests {
+    @Test("Mantener el Hotkey más allá del Activation Delay muestra el Window Switcher con la selección en el segundo ítem")
     func showsAfterDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
-        #expect(holdHotkey(&c) == [.showPanel([item(1), item(2), item(3)], selected: 1)])
+        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 1))])
     }
 
     @Test("Si la Switch Session arranca con ⌘⇧⇥, la selección empieza en el último ítem")
     func shiftTabStartsAtLast() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         _ = c.send(.keyDown(.tab, [.command, .shift], isRepeat: false))
-        #expect(c.send(.activationDelayElapsed) == [.showPanel([item(1), item(2), item(3)], selected: 2)])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 2))])
         #expect(c.send(.keyDown(.tab, [.command, .shift], isRepeat: false)) == [.consumeEvent, .selectItem(1)])
     }
 
-    @Test("Con un toque rápido no se muestra ni se oculta el panel")
-    func quickSwitchHasNoPanel() {
+    @Test("Con un toque rápido no se muestra ni se oculta el Window Switcher")
+    func quickSwitchHasNoSwitcher() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         let effects = c.send(.keyDown(.tab, [.command], isRepeat: false)) + c.send(.keyUp(.tab)) + c.send(.modifiersChanged([]))
-        #expect(!effects.contains { if case .showPanel = $0 { true } else { false } })
-        #expect(!effects.contains(.hidePanel))
+        #expect(!effects.contains { if case .showSwitcher = $0 { true } else { false } })
+        #expect(!effects.contains(.hideSwitcher))
     }
 
-    @Test("Con un solo ítem el panel se muestra igual, y soltar solo lo oculta")
+    @Test("Con un solo ítem el Window Switcher se muestra igual, y soltar solo lo oculta")
     func singleItem() {
         var c = core([win(1, stack: 0)])
-        #expect(holdHotkey(&c) == [.showPanel([item(1)], selected: 0)])
+        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1)], selected: 0))])
         #expect(c.send(.keyDown(.tab, [.command], isRepeat: false)) == [.consumeEvent, .selectItem(0)])
-        #expect(c.send(.modifiersChanged([])) == [.hidePanel])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher])
     }
 
-    @Test("Con cero ítems el panel no aparece, y soltar no hace nada")
+    @Test("Con cero ítems el Window Switcher no aparece, y soltar no hace nada")
     func noItems() {
         var c = core([win(1, stack: 0, minimized: true)])
         #expect(holdHotkey(&c) == [])
@@ -57,7 +57,7 @@ struct WindowSwitcherPanelTests {
         var untitled = win(2, app: 7, stack: 1)
         untitled.title = ""
         var c = core([win(1, stack: 0), untitled])
-        #expect(holdHotkey(&c) == [.showPanel([item(1), item(2, app: 7, title: "app7")], selected: 1)])
+        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2, app: 7, title: "app7")], selected: 1))])
     }
 }
 
@@ -100,10 +100,10 @@ struct WindowSwitcherNavigationTests {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         holdHotkey(&c)
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
-        #expect(c.send(.modifiersChanged([])) == [.hidePanel, .activate(WindowID(3))])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
     }
 
-    @Test("⇥ antes del Activation Delay también avanza, sin panel")
+    @Test("⇥ antes del Activation Delay también avanza, sin Window Switcher")
     func tabBeforeDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
@@ -112,7 +112,7 @@ struct WindowSwitcherNavigationTests {
     }
 }
 
-@Suite("Window Switcher: Windows que cambian con el panel abierto")
+@Suite("Window Switcher: Windows que cambian con el Window Switcher abierto")
 struct WindowSwitcherSnapshotTests {
     @Test("Si se cierra otra Window, sale de la grilla y la selección sigue en la misma Window")
     func closedOtherWindow() {
@@ -120,8 +120,8 @@ struct WindowSwitcherSnapshotTests {
         holdHotkey(&c)
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))  // selección en 3
         #expect(c.send(.snapshot(snapshot([win(2, stack: 0), win(3, stack: 1)])))
-            == [.updatePanel([item(2), item(3)], selected: 1)])
-        #expect(c.send(.modifiersChanged([])) == [.hidePanel, .activate(WindowID(3))])
+            == [.updateSwitcher(.init([item(2), item(3)], selected: 1))])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
     }
 
     @Test("Si se cierra la Window seleccionada, la selección pasa a la que ocupa su lugar")
@@ -129,8 +129,8 @@ struct WindowSwitcherSnapshotTests {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
         holdHotkey(&c)
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(3, stack: 1)])))
-            == [.updatePanel([item(1), item(3)], selected: 1)])
-        #expect(c.send(.modifiersChanged([])) == [.hidePanel, .activate(WindowID(3))])
+            == [.updateSwitcher(.init([item(1), item(3)], selected: 1))])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
     }
 
     @Test("Si se cierra la última Window de la grilla estando seleccionada, la selección pasa a la nueva última")
@@ -139,61 +139,61 @@ struct WindowSwitcherSnapshotTests {
         holdHotkey(&c)
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))  // selección en 3
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1)])))
-            == [.updatePanel([item(1), item(2)], selected: 1)])
+            == [.updateSwitcher(.init([item(1), item(2)], selected: 1))])
     }
 
-    @Test("Si se cierran todas las Windows, el panel se oculta y soltar no hace nada")
+    @Test("Si se cierran todas las Windows, el Window Switcher se oculta y soltar no hace nada")
     func allClosed() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         holdHotkey(&c)
-        #expect(c.send(.snapshot(snapshot([]))) == [.hidePanel])
+        #expect(c.send(.snapshot(snapshot([]))) == [.hideSwitcher])
         #expect(c.send(.modifiersChanged([])) == [])
     }
 
-    @Test("Si queda una sola Window, soltar solo oculta el panel")
+    @Test("Si queda una sola Window, soltar solo oculta el Window Switcher")
     func oneLeft() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         holdHotkey(&c)
-        #expect(c.send(.snapshot(snapshot([win(1, stack: 0)]))) == [.updatePanel([item(1)], selected: 0)])
-        #expect(c.send(.modifiersChanged([])) == [.hidePanel])
+        #expect(c.send(.snapshot(snapshot([win(1, stack: 0)]))) == [.updateSwitcher(.init([item(1)], selected: 0))])
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher])
     }
 
-    @Test("Una foto sin cambios en la grilla no actualiza el panel")
+    @Test("Una foto sin cambios en la grilla no actualiza el Window Switcher")
     func unchanged() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         holdHotkey(&c)
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1)]))) == [])
     }
 
-    @Test("La foto fresca que llega antes del Activation Delay se usa al mostrar el panel")
+    @Test("La foto fresca que llega antes del Activation Delay se usa al mostrar el Window Switcher")
     func freshSnapshotBeforeDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)]))) == [])
-        #expect(c.send(.activationDelayElapsed) == [.showPanel([item(1), item(2), item(3)], selected: 1)])
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(2), item(3)], selected: 1))])
     }
 
-    @Test("Si el panel no se mostró por no tener ítems y llegan Windows, aparece")
+    @Test("Si el Window Switcher no se mostró por no tener ítems y llegan Windows, aparece")
     func appearsWhenWindowsArrive() {
         var c = core([])
         holdHotkey(&c)
         #expect(c.send(.snapshot(snapshot([win(1, stack: 0), win(2, stack: 1)])))
-            == [.showPanel([item(1), item(2)], selected: 1)])
+            == [.showSwitcher(.init([item(1), item(2)], selected: 1))])
     }
 }
 
 @Suite("Window Switcher: Esc")
 struct WindowSwitcherEscapeTests {
-    @Test("Esc oculta el panel y soltar el modificador después no cambia de Window")
+    @Test("Esc oculta el Window Switcher y soltar el modificador después no cambia de Window")
     func escapeCancels() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         holdHotkey(&c)
-        #expect(c.send(.keyDown(.escape, [.command], isRepeat: false)) == [.consumeEvent, .hidePanel])
+        #expect(c.send(.keyDown(.escape, [.command], isRepeat: false)) == [.consumeEvent, .hideSwitcher])
         #expect(c.send(.keyUp(.escape)) == [.consumeEvent])
         #expect(c.send(.modifiersChanged([])) == [])
     }
 
-    @Test("Esc antes del Activation Delay cancela el temporizador y no muestra el panel")
+    @Test("Esc antes del Activation Delay cancela el temporizador y no muestra el Window Switcher")
     func escapeBeforeDelay() {
         var c = core([win(1, stack: 0), win(2, stack: 1)])
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
