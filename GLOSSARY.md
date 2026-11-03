@@ -45,7 +45,7 @@ Lo que pasa entre apretar el Hotkey y soltar el modificador. Termina en un Quick
 _Avoid_: Gesture, interaction
 
 **Recency Order**:
-El orden de las Windows en el Window Switcher: la usada más recientemente primero.
+El orden de las Windows en el Window Switcher: la usada más recientemente primero, con las Minimized Windows al final (también de la más reciente a la menos reciente).
 _Avoid_: Z-order, MRU list
 
 **Quick Switch**:

@@ -167,8 +167,8 @@ struct MinimizedAndHiddenInclusionTests {
     @Test("Por defecto las Minimized y las de Hidden Apps entran, y el ítem las marca")
     func includedByDefault() {
         let items = shownItems(.init())
-        #expect(items.map(\.id) == [.window(WindowID(1)), .window(WindowID(2)), .window(WindowID(3))])
-        #expect(items.map(\.mark) == [.none, .minimized, .appHidden])
+        #expect(items.map(\.id) == [.window(WindowID(1)), .window(WindowID(3)), .window(WindowID(2))])
+        #expect(items.map(\.mark) == [.none, .appHidden, .minimized])
     }
 
     @Test("Una Window minimizada de una App oculta se marca como minimizada")
@@ -186,5 +186,35 @@ struct MinimizedAndHiddenInclusionTests {
     @Test("Con las Hidden Apps desactivadas no aparecen, pero las Minimized sí")
     func hiddenOff() {
         #expect(shownItems(.init(includesHiddenApps: false)).map(\.id) == [.window(WindowID(1)), .window(WindowID(2))])
+    }
+}
+
+@Suite("Minimized Windows al final")
+struct MinimizedLastTests {
+    @Test("Las Windows que no están Minimized van primero y las Minimized después, cada grupo en Recency Order")
+    func minimizedAfterTheRest() {
+        var c = core([
+            win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2),
+            win(4, stack: 3, minimized: true), win(5, stack: 4, appHidden: true),
+        ])
+        #expect(shownIDs(holdHotkey(&c)) == [1, 3, 5, 2, 4].map { .window(WindowID($0)) })
+    }
+
+    @Test("Un Quick Switch salta a la siguiente Window que no está Minimized")
+    func quickSwitchSkipsMinimized() {
+        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2)])
+        #expect(quickSwitchTarget(&c) == WindowID(3))
+    }
+
+    @Test("Si todas las demás están Minimized, un Quick Switch salta a la Minimized más reciente")
+    func quickSwitchToMinimizedWhenNoOther() {
+        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2, minimized: true)])
+        #expect(quickSwitchTarget(&c) == WindowID(2))
+    }
+
+    @Test("Las Windowless Apps siguen al final, después de las Minimized")
+    func windowlessAfterMinimized() {
+        var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2)], windowless: [9])
+        #expect(shownIDs(holdHotkey(&c)) == [.window(WindowID(1)), .window(WindowID(3)), .window(WindowID(2)), .windowlessApp(AppID(9))])
     }
 }

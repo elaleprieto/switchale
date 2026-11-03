@@ -118,7 +118,7 @@ struct LiveConfigTests {
     @Test("Desactivar en vivo la inclusión de Minimized Windows las saca de la próxima Switch Session")
     func inclusionLive() {
         var c = core([win(1, stack: 0), win(2, stack: 1, minimized: true), win(3, stack: 2)])
-        #expect(shownContent(holdHotkey(&c))?.items.map(\.id) == [.window(WindowID(1)), .window(WindowID(2)), .window(WindowID(3))])
+        #expect(shownContent(holdHotkey(&c))?.items.map(\.id) == [.window(WindowID(1)), .window(WindowID(3)), .window(WindowID(2))])
         _ = c.send(.modifiersChanged([]))
         _ = c.send(.windowFocused(WindowID(1)))
         _ = c.send(.configChanged(.init(includesMinimizedWindows: false)))
