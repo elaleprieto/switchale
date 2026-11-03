@@ -10,27 +10,22 @@ final class Orchestrator {
     /// La configuración vigente, de `SwitcherPreferences`; al cambiarla se avisa al núcleo, que la
     /// aplica desde la próxima Switch Session.
     private var config = SwitcherPreferences.load() {
-        didSet {
-            source.includesOtherSpaces = Self.effective(config).includesOtherSpaces
-            dispatch(.configChanged(Self.effective(config)))
-        }
+        didSet { dispatch(.configChanged(config)) }
     }
-    private lazy var core = SwitcherCore(config: Self.effective(config))
-
-    /// La configuración que ve el núcleo: sin las APIs privadas de `Spaces` (que solo se consultan
-    /// con la opción activada), es como si "Windows de otros Spaces" estuviera desactivada.
-    private static func effective(_ config: SwitcherConfig) -> SwitcherConfig {
-        var effective = config
-        effective.includesOtherSpaces = config.includesOtherSpaces && Spaces.isAvailable
-        return effective
-    }
+    private lazy var core = SwitcherCore(config: config)
     /// Thumbnails por Window; el núcleo decide qué capturar y cuándo, ScreenCaptureKit captura.
     private var thumbnails = ThumbnailCache<ThumbnailImage>()
     /// Windows que muestra el Window Switcher ahora.
     private var visibleWindows: [WindowID] = []
     /// Tamaño de las Thumbnails de la Switch Session en curso, el que manda el núcleo.
     private var visibleThumbnailSize = ThumbnailSize()
-    private lazy var source = WindowSource { [weak self] snapshot in self?.dispatch(.snapshot(snapshot)) }
+    /// Con "Windows de otros Spaces" desactivada no consulta `Spaces`; si las APIs privadas fallan,
+    /// la foto no ubica las Windows de otros Spaces y el núcleo se comporta como con la opción
+    /// desactivada.
+    private lazy var source = WindowSource(
+        includesOtherSpaces: { [weak self] in self?.config.includesOtherSpaces ?? false },
+        onSnapshot: { [weak self] snapshot in self?.dispatch(.snapshot(snapshot)) }
+    )
     private let activator = WindowActivator()
     private lazy var switcherView = WindowSwitcherView(
         onClick: { [weak self] id in self?.dispatch(.itemClicked(id)) },
@@ -59,7 +54,6 @@ final class Orchestrator {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadConfig() }
         }
-        source.includesOtherSpaces = Self.effective(config).includesOtherSpaces
         source.refresh()
 
         let focus = FocusTracker(

@@ -18,58 +18,68 @@ struct WindowActivator {
     func activate(_ handle: WindowHandle) -> Bool {
         let app = handle.app
         if app.isSwitchale { return activateOwn(handle.id) }
-        if handle.isInOtherSpace { return activateInOtherSpace(handle) }
-        guard let element = handle.element, !app.isTerminated, axAttribute(element, kAXRoleAttribute) != nil
-        else { return false }
-        let wasHidden = app.isHidden
-        let wasMinimized = axIsMinimized(element)
-        if !wasHidden && !wasMinimized {
+        guard !app.isTerminated else { return false }
+        switch handle.location {
+        case .currentSpace(let element):
+            return activate(element, of: app)
+        case .otherSpace(let element):
+            if activateInOtherSpace(handle, element: element) { return true }
+            // Si `Spaces` falló, como si la opción estuviera desactivada: por AX, si AX la lista.
+            guard let element else { return false }
+            return activate(element, of: app)
+        }
+    }
+
+    /// Activación por AX. Devuelve false si la Window ya no existe.
+    private func activate(_ element: AXUIElement, of app: NSRunningApplication) -> Bool {
+        guard axAttribute(element, kAXRoleAttribute) != nil else { return false }
+        if !app.isHidden && !axIsMinimized(element) {
             focus(element, of: app)
             return true
         }
-        Task { @MainActor in
-            // Primero la App y después la Window: una Window minimizada de una App oculta necesita las dos.
-            if wasHidden {
-                app.unhide()
-                await Self.wait { !app.isHidden }
-            }
-            if wasMinimized {
-                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-                await Self.wait { !axIsMinimized(element) }
-            }
-            guard !app.isTerminated else { return }
-            focus(element, of: app)
-        }
+        Task { @MainActor in await restoreAndFocus(element, of: app) }
         return true
     }
 
     /// Una Window de otro Space: `Spaces` pone al frente su App con ella como key, y macOS cambia
-    /// a su Space. Ya en ese Space, AX la lista y se le da foco como a cualquier otra (si AX la
-    /// listaba de antes, con ese elemento). Devuelve false si la App terminó o `Spaces` falló.
-    private func activateInOtherSpace(_ handle: WindowHandle) -> Bool {
+    /// a su Space. Ya en ese Space, AX la lista y se la restaura y se le da foco como a cualquier
+    /// otra (si AX la listaba de antes, con ese elemento). Devuelve false si `Spaces` falló.
+    private func activateInOtherSpace(_ handle: WindowHandle, element: AXUIElement?) -> Bool {
         let app = handle.app
-        guard !app.isTerminated else { return false }
         if app.isHidden { app.unhide() }
-        guard Spaces.focus(handle.id, pid: app.processIdentifier) else { return false }
+        guard Spaces.focus(handle) else { return false }
         Task { @MainActor in
-            var element = handle.element
+            var element = element
             await Self.wait {
-                element = element ?? Self.axWindow(handle.id, pid: app.processIdentifier)
+                element = element ?? Self.axWindow(of: handle)
                 return element != nil
             }
-            guard let element, !app.isTerminated else { return }
-            if axIsMinimized(element) {
-                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-            }
-            focus(element, of: app)
+            guard let element else { return }
+            await restoreAndFocus(element, of: app)
         }
         return true
     }
 
-    /// El elemento AX de la Window con este id, si AX la lista (ya en su Space).
-    private static func axWindow(_ id: WindowID, pid: pid_t) -> AXUIElement? {
-        let windows = axAttribute(axApplicationElement(pid: pid), kAXWindowsAttribute) as? [AXUIElement] ?? []
-        return windows.first { axWindowID($0) == id }
+    /// Muestra la App, desminimiza la Window y le da foco. Primero la App y después la Window: una
+    /// Window minimizada de una App oculta necesita las dos.
+    private func restoreAndFocus(_ element: AXUIElement, of app: NSRunningApplication) async {
+        if app.isHidden {
+            app.unhide()
+            await Self.wait { !app.isHidden }
+        }
+        if axIsMinimized(element) {
+            AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+            await Self.wait { !axIsMinimized(element) }
+        }
+        guard !app.isTerminated else { return }
+        focus(element, of: app)
+    }
+
+    /// El elemento AX de la Window, si AX la lista (ya en su Space).
+    private static func axWindow(of handle: WindowHandle) -> AXUIElement? {
+        let appElement = axApplicationElement(pid: handle.app.processIdentifier)
+        let windows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        return windows.first { axWindowID($0) == handle.id }
     }
 
     /// Reintenta cada `pollInterval` hasta que se cumpla la condición o venza el timeout.

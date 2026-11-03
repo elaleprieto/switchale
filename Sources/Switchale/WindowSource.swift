@@ -4,13 +4,18 @@ import SwitchaleCore
 
 /// Lo necesario para activar una Window conocida en la última foto.
 struct WindowHandle {
+    /// Dónde está la Window, que define cómo se activa.
+    enum Location {
+        /// En el Space actual (o sin ubicar en otro Space): se activa por AX.
+        case currentSpace(AXUIElement)
+        /// En otro Space según `Spaces` (con la opción "Windows de otros Spaces" activada):
+        /// activarla cambia de Space. Sin elemento si AX no la lista.
+        case otherSpace(AXUIElement?)
+    }
+
     let id: WindowID
-    /// Nil para las Windows de otros Spaces que AX no lista: se activan por `Spaces`.
-    let element: AXUIElement?
     let app: NSRunningApplication
-    /// Si es de otro Space y se encontró con la opción "Windows de otros Spaces" activada: activarla
-    /// cambia de Space (con `Spaces`).
-    let isInOtherSpace: Bool
+    let location: Location
 }
 
 /// Fuente de Windows: informa los datos de cada Window (Space, pantalla, Minimized, App Hidden);
@@ -24,15 +29,16 @@ struct WindowHandle {
 @MainActor
 final class WindowSource {
     private(set) var handles: [WindowID: WindowHandle] = [:]
-    /// Incluir las Windows de otros Spaces en las próximas fotos. Solo con esto activado se usan
-    /// las APIs privadas de `Spaces`, y solo si están disponibles.
-    var includesOtherSpaces = false
+    /// Si incluir las Windows de otros Spaces en la próxima foto. Solo con esto activado se usan
+    /// las APIs privadas de `Spaces`.
+    private let includesOtherSpaces: () -> Bool
     private let onSnapshot: (Snapshot) -> Void
     private let queue = DispatchQueue(label: "com.aleprieto.switchale.window-source", qos: .userInteractive)
     private var isCapturing = false
     private var needsAnotherCapture = false
 
-    init(onSnapshot: @escaping (Snapshot) -> Void) {
+    init(includesOtherSpaces: @escaping () -> Bool, onSnapshot: @escaping (Snapshot) -> Void) {
+        self.includesOtherSpaces = includesOtherSpaces
         self.onSnapshot = onSnapshot
     }
 
@@ -48,7 +54,7 @@ final class WindowSource {
             apps: NSWorkspace.shared.runningApplications.filter { $0.listsWindowsInSwitcher && !$0.isTerminated },
             frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
             screens: Screens(mouse: Self.mouseScreen(), primary: ScreenID(display: CGMainDisplayID())),
-            includesOtherSpaces: includesOtherSpaces
+            includesOtherSpaces: includesOtherSpaces()
         )
         queue.async { [weak self] in
             let capture = Self.capture(input)
@@ -96,7 +102,8 @@ final class WindowSource {
         /// Todas las ventanas que lista AX, sean Windows o no: las de otros Spaces son las que no.
         var axListed = Set<WindowID>()
         // Con la opción desactivada no se llama a `Spaces` (ni a ninguna API privada de SkyLight).
-        let otherSpacesIDs = input.includesOtherSpaces ? Spaces.windowIDsInAllSpaces() : nil
+        // Nil si no se pudo ubicar qué ventanas son de otros Spaces: la foto no los ubica.
+        let otherSpacesIDs = input.includesOtherSpaces ? Spaces.windowIDsInOtherSpaces() : nil
 
         for app in input.apps {
             let appID = AppID(pid: app.processIdentifier)
@@ -116,22 +123,24 @@ final class WindowSource {
                 else { continue }
 
                 let isMinimized = axIsMinimized(element)
-                // AX solo lista las Windows del Space actual (y las Minimized); lo que no está en
-                // pantalla ni minimizado ni de una App oculta no se puede ubicar en el Space actual.
-                let isInCurrentSpace = cg.onScreenIDs.contains(id) || isMinimized || app.isHidden
-                windows.append(Window(
-                    id: id,
-                    appID: appID,
-                    title: (axAttribute(element, kAXTitleAttribute) as? String) ?? "",
-                    screen: screen(containing: entry.bounds) ?? input.screens.mouse,
-                    isInCurrentSpace: isInCurrentSpace,
-                    isMinimized: isMinimized,
-                    isAppHidden: app.isHidden,
-                    stackIndex: entry.stackIndex
+                let isInCurrentSpace: Bool
+                if let otherSpacesIDs {
+                    // Con `Spaces`, la pertenencia a otro Space la dice SkyLight (también para las
+                    // Minimized y las de Apps Hidden).
+                    isInCurrentSpace = !otherSpacesIDs.contains(id)
+                } else {
+                    // AX solo lista las Windows del Space actual (y las Minimized); lo que no está
+                    // en pantalla ni minimizado ni de una App oculta no se puede ubicar en el Space
+                    // actual.
+                    isInCurrentSpace = cg.onScreenIDs.contains(id) || isMinimized || app.isHidden
+                }
+                windows.append(window(
+                    id, of: app, title: (axAttribute(element, kAXTitleAttribute) as? String) ?? "", entry: entry,
+                    isInCurrentSpace: isInCurrentSpace, isMinimized: isMinimized, screens: input.screens
                 ))
                 newHandles[id] = WindowHandle(
-                    id: id, element: element, app: app,
-                    isInOtherSpace: otherSpacesIDs != nil && !isInCurrentSpace
+                    id: id, app: app,
+                    location: otherSpacesIDs?.contains(id) == true ? .otherSpace(element) : .currentSpace(element)
                 )
                 hasWindows = true
             }
@@ -144,30 +153,43 @@ final class WindowSource {
         if let otherSpacesIDs {
             let appsByPID = Dictionary(input.apps.map { ($0.processIdentifier, $0) }, uniquingKeysWith: { first, _ in first })
             // Las de otros Spaces que AX no lista: ventanas normales de CoreGraphics, de una App
-            // del Window Switcher, que no están en pantalla.
-            for id in otherSpacesIDs where !axListed.contains(id) && !cg.onScreenIDs.contains(id) {
-                guard let entry = cg.entries[id], entry.isNormal, let app = appsByPID[entry.pid] else { continue }
-                windows.append(Window(
-                    id: id,
-                    appID: AppID(pid: entry.pid),
-                    // CoreGraphics da el título solo con Grabación de pantalla; si no, el núcleo
-                    // muestra el nombre de la App.
-                    title: entry.title,
-                    screen: screen(containing: entry.bounds) ?? input.screens.mouse,
-                    isInCurrentSpace: false,
-                    isMinimized: false,
-                    isAppHidden: app.isHidden,
-                    stackIndex: entry.stackIndex
+            // del Window Switcher.
+            for id in otherSpacesIDs where !axListed.contains(id) {
+                guard let entry = cg.entries[id], entry.isNormal,
+                      let pid = entry.pid, let app = appsByPID[pid]
+                else { continue }
+                // CoreGraphics da el título solo con Grabación de pantalla; si no, el núcleo
+                // muestra el nombre de la App.
+                windows.append(window(
+                    id, of: app, title: entry.title, entry: entry,
+                    isInCurrentSpace: false, isMinimized: false, screens: input.screens
                 ))
-                newHandles[id] = WindowHandle(id: id, element: nil, app: app, isInOtherSpace: true)
+                newHandles[id] = WindowHandle(id: id, app: app, location: .otherSpace(nil))
             }
         }
         return Capture(
             snapshot: Snapshot(
                 windows: windows, apps: apps, focusedWindow: focusedWindow, screens: input.screens,
-                windowlessApps: windowlessApps
+                windowlessApps: windowlessApps, locatesOtherSpaces: otherSpacesIDs != nil
             ),
             handles: newHandles
+        )
+    }
+
+    /// La Window de esta App, con la pantalla y el orden de apilado de CoreGraphics.
+    private nonisolated static func window(
+        _ id: WindowID, of app: NSRunningApplication, title: String, entry: CGEntry,
+        isInCurrentSpace: Bool, isMinimized: Bool, screens: Screens
+    ) -> Window {
+        Window(
+            id: id,
+            appID: AppID(pid: app.processIdentifier),
+            title: title,
+            screen: screen(containing: entry.bounds) ?? screens.mouse,
+            isInCurrentSpace: isInCurrentSpace,
+            isMinimized: isMinimized,
+            isAppHidden: app.isHidden,
+            stackIndex: entry.stackIndex
         )
     }
 
@@ -177,7 +199,8 @@ final class WindowSource {
         let layer: Int
         let stackIndex: Int
         let bounds: CGRect
-        let pid: pid_t
+        /// Nil si CoreGraphics no informa el dueño.
+        let pid: pid_t?
         let title: String
         /// Ventana normal según `isNormalCGWindow`.
         let isNormal: Bool
@@ -217,8 +240,8 @@ final class WindowSource {
             let pid = info[kCGWindowOwnerPID as String] as? pid_t
             let isNormal = isNormalCGWindow(layer: layer, bounds: bounds, alpha: alpha)
             entries[WindowID(Int(number))] = CGEntry(
-                layer: layer, stackIndex: index, bounds: bounds, pid: pid ?? 0,
-                title: info[kCGWindowName as String] as? String ?? "", isNormal: isNormal && pid != nil
+                layer: layer, stackIndex: index, bounds: bounds, pid: pid,
+                title: info[kCGWindowName as String] as? String ?? "", isNormal: isNormal
             )
             if isNormal, let pid { pidsWithNormalWindows.insert(pid) }
         }
