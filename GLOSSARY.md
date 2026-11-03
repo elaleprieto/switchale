@@ -21,7 +21,7 @@ Una Window que está en el Dock; sigue siendo un destino válido del switcher.
 Una App ocultada con ⌘H; sus Windows siguen existiendo pero no están en pantalla.
 
 **Windowless App**:
-Una App en ejecución sin Windows abiertas. Aparece al final del Scope All Windows como una entrada con el ícono de la App; activarla equivale a hacer clic en su ícono del Dock.
+Una App en ejecución sin Windows abiertas. Aparece al final del Scope All Windows como una entrada con el ícono de la App; activarla equivale a hacer clic en su ícono del Dock. Finder y switchale nunca son Windowless Apps: corren siempre, así que sin Windows no aparecen.
 
 **Space**:
 Un escritorio virtual de macOS. Las Windows de otros Spaces están excluidas por defecto.

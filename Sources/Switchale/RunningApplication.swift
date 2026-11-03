@@ -10,4 +10,10 @@ extension NSRunningApplication {
     var listsWindowsInSwitcher: Bool {
         activationPolicy == .regular || isSwitchale
     }
+
+    /// Si puede entrar como Windowless App cuando no tiene Windows. Finder y switchale no: corren
+    /// siempre, y switchale sin Windows no tiene nada que mostrar al activarla.
+    var canBeWindowless: Bool {
+        !isSwitchale && bundleIdentifier != "com.apple.finder"
+    }
 }

@@ -145,8 +145,9 @@ final class WindowSource {
                 hasWindows = true
             }
             // Windowless: sin Windows nuestras y sin ventanas normales en CoreGraphics (que sí ve
-            // las de otros Spaces, que AX no lista).
-            if !hasWindows, !cg.pidsWithNormalWindows.contains(app.processIdentifier) {
+            // las de otros Spaces, que AX no lista). Nunca Finder ni switchale: las dos corren
+            // siempre, así que serían una entrada fija al final del Window Switcher.
+            if !hasWindows, !cg.pidsWithNormalWindows.contains(app.processIdentifier), app.canBeWindowless {
                 windowlessApps.append(appID)
             }
         }
