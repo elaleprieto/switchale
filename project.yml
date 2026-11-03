@@ -64,6 +64,8 @@ targets:
       base:
         PRODUCT_NAME: switchale
         PRODUCT_BUNDLE_IDENTIFIER: com.aleprieto.switchale
+        # Assets.xcassets/AppIcon lo genera scripts/make-icon.swift.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
 schemes:
   Switchale:
