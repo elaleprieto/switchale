@@ -30,7 +30,7 @@ final class PreferencesWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: true
@@ -51,25 +51,21 @@ final class PreferencesWindowController: NSWindowController {
         footer.orientation = .horizontal
         footer.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [tabs, footer])
-        stack.orientation = .vertical
-        stack.alignment = .trailing
-        stack.spacing = 12
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 20, bottom: 20, right: 20)
-        stack.translatesAutoresizingMaskIntoConstraints = false
         tabs.translatesAutoresizingMaskIntoConstraints = false
 
+        // Márgenes iguales a los dos lados: la caja de pestañas y el pie, de 520 de ancho.
         let content = NSView()
-        content.addSubview(stack)
+        content.addSubview(tabs)
+        content.addSubview(footer)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: content.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            tabs.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 20),
+            tabs.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            tabs.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            tabs.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
             tabs.widthAnchor.constraint(equalToConstant: 520),
             footer.leadingAnchor.constraint(equalTo: tabs.leadingAnchor),
             footer.trailingAnchor.constraint(equalTo: tabs.trailingAnchor),
+            footer.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 12),
+            footer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
         ])
         window.contentView = content
     }
