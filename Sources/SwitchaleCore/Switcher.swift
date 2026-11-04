@@ -159,11 +159,31 @@ struct ItemList: Equatable {
 
     func index(of id: ItemID) -> Int? { ids.firstIndex(of: id) }
 
-    /// Con el Hotkey del Scope, el segundo ítem en Recency Order (un Quick Switch); con el Hotkey
-    /// del Scope con ⇧ (si el Scope retrocede con ⇧), el último. Si hay uno solo, ese.
-    func initialSelection(backwards: Bool) -> Int {
+    /// Con el Hotkey del Scope, el primer ítem que no es la Window actual (un Quick Switch): el
+    /// segundo si el primero es la Window actual, si no el primero. Con el Hotkey del Scope con ⇧
+    /// (si el Scope retrocede con ⇧), el último. Si hay uno solo, ese.
+    func initialSelection(backwards: Bool, current: CurrentWindow) -> Int {
         if backwards { return max(0, count - 1) }
-        return count >= 2 ? 1 : 0
+        return count >= 2 && current.isFirst(of: self) ? 1 : 0
+    }
+}
+
+/// La Window donde está el usuario, según los cambios de foco. El Quick Switch la saltea solo si es
+/// el primer ítem: si la foto todavía no la tiene (una Window recién abierta) o no es una Window (un
+/// panel), el primer ítem ya es la anterior.
+enum CurrentWindow: Equatable {
+    /// Sin cambios de foco todavía: se supone que es la primera del Recency Order.
+    case unknown
+    case window(WindowID)
+    /// La App activa no tiene Window con foco (p. ej. el escritorio del Finder).
+    case none
+
+    func isFirst(of items: ItemList) -> Bool {
+        switch self {
+        case .unknown: true
+        case .window(let id): items[0] == .window(id)
+        case .none: false
+        }
     }
 }
 
@@ -201,6 +221,7 @@ public struct SwitcherState: Sendable {
     var recency: [WindowID] = []
     /// La App activa, que define el Scope Current App.
     var activeApp: AppID?
+    var current: CurrentWindow = .unknown
     var session: Session?
     /// Teclas consumidas cuyo keyUp hay que consumir (puede llegar después de terminar la sesión).
     var heldKeys: Set<KeyCode> = []
@@ -228,13 +249,13 @@ public struct SwitcherState: Sendable {
         /// Siempre mayor que 0: se valida al recibir `switcherColumnsChanged`.
         var columns: Int?
 
-        init(scope: Scope, config: SwitcherConfig, items: ItemList, startsBackwards: Bool) {
+        init(scope: Scope, config: SwitcherConfig, items: ItemList, startsBackwards: Bool, current: CurrentWindow) {
             self.scope = scope
             hotkey = config.hotkeys[scope]
             thumbnailSize = config.thumbnailSize
             self.items = items
             self.startsBackwards = startsBackwards
-            selected = items.initialSelection(backwards: startsBackwards)
+            selected = items.initialSelection(backwards: startsBackwards, current: current)
         }
 
         var isSwitcherVisible: Bool { shown != nil }
@@ -243,9 +264,9 @@ public struct SwitcherState: Sendable {
 
         /// Cambian los ítems: la selección sigue a su ítem; si ese se fue, queda en la misma
         /// posición (o en la última, si la grilla se achicó).
-        mutating func replaceItems(with newItems: ItemList) {
+        mutating func replaceItems(with newItems: ItemList, current: CurrentWindow) {
             if items.count == 0 {
-                selected = newItems.initialSelection(backwards: startsBackwards)
+                selected = newItems.initialSelection(backwards: startsBackwards, current: current)
             } else if let item = selectedItem, let index = newItems.index(of: item) {
                 selected = index
             } else {
@@ -380,7 +401,7 @@ public struct SwitcherCore: Sendable {
             guard !isRepeat else { return (next, [.consumeEvent]) }
             next.session = .init(
                 scope: scope, config: config, items: items(next, scope),
-                startsBackwards: config.hotkeys[scope].isReversed(by: modifiers)
+                startsBackwards: config.hotkeys[scope].isReversed(by: modifiers), current: next.current
             )
             return (next, [.consumeEvent, .refreshSnapshot, .startActivationTimer(milliseconds: next.config.activationDelay.milliseconds)])
 
@@ -409,13 +430,22 @@ public struct SwitcherCore: Sendable {
         case .windowFocused(let id):
             next.recency.removeAll { $0 == id }
             next.recency.insert(id, at: 0)
+            next.current = .window(id)
             // La activación de la App llega aparte y puede llegar tarde: la App de la Window
             // enfocada ya es la App activa.
-            if let window = next.snapshot.windowsByID[id] { next.activeApp = window.appID }
+            guard let window = next.snapshot.windowsByID[id] else {
+                // Una Window recién abierta: la foto todavía no la tiene.
+                return (next, [.refreshSnapshot])
+            }
+            next.activeApp = window.appID
             return (next, [])
 
         case .appActivated(let app):
             next.activeApp = app
+            // Si la App tiene una Window con foco, su `windowFocused` llega después.
+            if case .window(let id) = next.current, let window = next.snapshot.windowsByID[id], window.appID != app {
+                next.current = .none
+            }
             return (next, [])
 
         case .activationFailed:
@@ -428,14 +458,16 @@ public struct SwitcherCore: Sendable {
         case .snapshot(let snapshot):
             next.snapshot = snapshot
             let present = Set(snapshot.windows.map(\.id))
-            next.recency = next.recency.filter { present.contains($0) }
+            // La Window actual se queda aunque la foto no la tenga: puede ser anterior a que se
+            // abriera (la foto se toma de forma asíncrona). Si no, iría al final del Recency Order.
+            next.recency = next.recency.filter { present.contains($0) || next.current == .window($0) }
             let known = Set(next.recency)
             let unknown = snapshot.windows
                 .filter { !known.contains($0.id) }
                 .sorted { $0.stackIndex < $1.stackIndex }
             next.recency += unknown.map(\.id)
             guard var session = next.session else { return (next, []) }
-            session.replaceItems(with: items(next, session.scope))
+            session.replaceItems(with: items(next, session.scope), current: next.current)
             session.panelScreen = session.panelScreen ?? panelScreen(of: snapshot, config: next.config)
             let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session

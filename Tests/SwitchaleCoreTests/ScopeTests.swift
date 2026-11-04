@@ -56,7 +56,8 @@ struct CurrentAppScopeTests {
         _ = c.send(.windowFocused(WindowID(9)))
         _ = c.send(.keyDown(.grave, [.option], isRepeat: false))
         deliverFreshSnapshot(&c)
-        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(3)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
+        // La Window actual (9) no está en el Window Switcher: la selección queda en la anterior.
+        #expect(c.send(.activationDelayElapsed) == [.showSwitcher(.init([item(1), item(3)], selected: 0, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
     }
 
     @Test("Si la App activa no tiene Windows, no aparece en el Scope: no hay Window Switcher ni activación")
