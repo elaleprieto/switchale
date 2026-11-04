@@ -44,8 +44,14 @@ final class PreferencesWindowController: NSWindowController {
         tabs.addTabViewItem(tab("Appearance", makeAppearance()))
 
         let restore = NSButton(title: "Restaurar valores por defecto", target: self, action: #selector(restoreDefaults))
+        let version = NSTextField(labelWithString: Self.versionText)
+        version.textColor = .secondaryLabelColor
+        version.isSelectable = true
+        let footer = NSStackView(views: [version, NSView(), restore])
+        footer.orientation = .horizontal
+        footer.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [tabs, restore])
+        let stack = NSStackView(views: [tabs, footer])
         stack.orientation = .vertical
         stack.alignment = .trailing
         stack.spacing = 12
@@ -62,12 +68,22 @@ final class PreferencesWindowController: NSWindowController {
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             tabs.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 20),
             tabs.widthAnchor.constraint(equalToConstant: 520),
+            footer.leadingAnchor.constraint(equalTo: tabs.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: tabs.trailingAnchor),
         ])
         window.contentView = content
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) no se usa") }
+
+    /// "Versión 1.0.0 (1)", del Info.plist (que sale de `project.yml`).
+    private static var versionText: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        return "Versión \(version) (\(build))"
+    }
 
     /// Muestra los valores guardados y trae la ventana al frente (la app no tiene ícono en el Dock).
     func present() {

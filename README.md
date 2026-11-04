@@ -29,6 +29,10 @@ Genera el proyecto y compila `build/DerivedData/Build/Products/<config>/switchal
 codesign -dv build/DerivedData/Build/Products/Debug/switchale.app
 ```
 
+## Versión
+
+La versión vive en `project.yml` (`CFBundleShortVersionString`, semver, y `CFBundleVersion`) y se muestra al pie de Preferencias. Con cada versión: subirla en `project.yml`, commitear y crear el tag `vX.Y.Z` sobre ese commit (`git tag vX.Y.Z && git push origin vX.Y.Z`).
+
 ## Permisos e inicio al loguearse
 
 Si falta Accesibilidad, al arrancar se abre la ventana de permisos; si solo falta Grabación de pantalla, solo en el primer arranque (siempre se puede abrir desde "Permisos…" en el menú). El primer clic en el botón de un permiso lo pide; los siguientes abren el panel de Configuración del Sistema. La ventana se actualiza sola cada segundo; como macOS puede no informar Grabación de pantalla hasta reabrir la app, una vez pedida ofrece "Reabrir switchale". Lo ya pedido y el primer arranque se guardan en `UserDefaults` (`requestedAccessibility`, `requestedScreenRecording`, `hasLaunched`). switchale se registra como login item (`SMAppService`) salvo que la preferencia `launchAtLogin` sea `NO`; para probar sin registrarlo:
