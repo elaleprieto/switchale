@@ -30,7 +30,7 @@ _Avoid_: Desktop, workspace
 ### El switcher
 
 **Window Switcher**:
-El panel propio de switchale que muestra Windows para elegir una mientras se mantiene el modificador del Hotkey.
+El panel propio de switchale que muestra Windows para elegir una mientras se mantiene el modificador del Hotkey. Arriba van las Windows abiertas; abajo, desde una fila nueva y separadas por una línea, las Minimized Windows y las Windowless Apps.
 _Avoid_: App Switcher, switcher panel
 
 **App Switcher**:

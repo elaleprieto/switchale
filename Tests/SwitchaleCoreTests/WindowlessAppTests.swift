@@ -10,7 +10,7 @@ struct WindowlessAppTests {
     @Test("Las Windowless Apps van siempre después de todas las Windows")
     func afterAllWindows() {
         var c = core([win(1, stack: 0), win(2, app: 2, stack: 1)], windowless: [8, 9])
-        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2, app: 2), windowlessItem(8), windowlessItem(9)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize()))])
+        #expect(holdHotkey(&c) == [.showSwitcher(.init([item(1), item(2, app: 2), windowlessItem(8), windowlessItem(9)], selected: 1, screen: mainScreen, thumbnailSize: ThumbnailSize(), lowerSectionStart: 2))])
     }
 
     @Test("Una App deja de ser Windowless cuando abre una Window y pasa a listarse por sus Windows")

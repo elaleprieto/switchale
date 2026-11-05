@@ -98,6 +98,43 @@ struct RecencyOrderTests {
         #expect(quickSwitchTarget(&c) == WindowID(1))
     }
 
+    // Recién Minimized: 1 tenía foco, se minimiza y el foco pasa a 2, pero la foto de antes la
+    // tiene abierta. Recency Order: 2, 1, 3.
+    private func justMinimized() -> SwitcherCore {
+        var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])
+        _ = c.send(.windowFocused(WindowID(3)))
+        _ = c.send(.windowFocused(WindowID(1)))
+        _ = c.send(.windowFocused(WindowID(2)))
+        return c
+    }
+
+    @Test("Una Window recién Minimized: la foto de la Switch Session la manda al final y la selección va a la anterior abierta")
+    func justMinimizedWithPanel() {
+        var c = justMinimized()
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        _ = c.send(.snapshot(snapshot([win(1, stack: 2, minimized: true), win(2, stack: 0), win(3, stack: 1)])))
+        let shown = shownContent(c.send(.activationDelayElapsed))
+        #expect(shown?.items.map(\.id) == [.window(WindowID(2)), .window(WindowID(3)), .window(WindowID(1))])
+        #expect(shown?.selected == 1)
+    }
+
+    @Test("Una Window recién Minimized: si la foto llega antes de soltar, el Quick Switch va a la anterior abierta")
+    func justMinimizedQuickSwitch() {
+        var c = justMinimized()
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        _ = c.send(.snapshot(snapshot([win(1, stack: 2, minimized: true), win(2, stack: 0), win(3, stack: 1)])))
+        #expect(c.send(.modifiersChanged([])) == [.cancelActivationTimer, .activate(WindowID(3))])
+    }
+
+    @Test("Si el usuario ya movió la selección, una foto nueva no la cambia de Window")
+    func movedSelectionFollowsItem() {
+        var c = justMinimized()
+        holdHotkey(&c)
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))  // de 1 a 3
+        _ = c.send(.snapshot(snapshot([win(1, stack: 2, minimized: true), win(2, stack: 0), win(3, stack: 1)])))
+        #expect(c.send(.modifiersChanged([])) == [.hideSwitcher, .activate(WindowID(3))])
+    }
+
     @Test("Las Windows cerradas salen del Recency Order")
     func closed() {
         var c = core([win(1, stack: 0), win(2, stack: 1), win(3, stack: 2)])

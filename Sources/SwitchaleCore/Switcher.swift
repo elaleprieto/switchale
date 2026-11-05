@@ -105,19 +105,97 @@ public enum SwitcherEffect: Sendable, Equatable {
     case hideSwitcher
 }
 
-/// Lo que muestra el Window Switcher: sus ítems, el índice seleccionado, la pantalla donde aparece
-/// y el tamaño de sus Thumbnails.
+/// Lo que muestra el Window Switcher: sus ítems, el índice seleccionado, la pantalla donde aparece,
+/// el tamaño de sus Thumbnails y dónde empieza la sección de abajo.
 public struct SwitcherContent: Sendable, Equatable {
     public var items: [SwitcherItem]
     public var selected: Int
     public var screen: ScreenID
     public var thumbnailSize: ThumbnailSize
+    /// Índice del primer ítem de la sección de abajo (Minimized Windows y Windowless Apps), o nil
+    /// si hay una sola sección.
+    public var lowerSectionStart: Int?
 
-    public init(_ items: [SwitcherItem], selected: Int, screen: ScreenID, thumbnailSize: ThumbnailSize) {
+    public init(
+        _ items: [SwitcherItem], selected: Int, screen: ScreenID, thumbnailSize: ThumbnailSize,
+        lowerSectionStart: Int? = nil
+    ) {
         self.items = items
         self.selected = selected
         self.screen = screen
         self.thumbnailSize = thumbnailSize
+        self.lowerSectionStart = lowerSectionStart
+    }
+
+    /// La grilla de este contenido con estas columnas.
+    public func grid(columns: Int) -> SwitcherGrid {
+        SwitcherGrid(count: items.count, lowerSectionStart: lowerSectionStart, columns: columns)
+    }
+}
+
+/// Cómo se reparten los ítems en filas: la sección de arriba (Windows abiertas) llena filas de
+/// `columns`, y la de abajo empieza en una fila nueva. La usan el núcleo (↑ y ↓) y la vista
+/// (posición de cada celda), así lo que se ve coincide con la navegación.
+public struct SwitcherGrid: Sendable, Equatable {
+    public struct Position: Sendable, Equatable {
+        public var row: Int
+        public var column: Int
+
+        public init(row: Int, column: Int) {
+            self.row = row
+            self.column = column
+        }
+    }
+
+    public let count: Int
+    public let columns: Int
+    /// Índice del primer ítem de la sección de abajo; nil si hay una sola sección.
+    public let lowerSectionStart: Int?
+
+    /// `columns` menor que 1 se toma como 1. Un `lowerSectionStart` que no deja ítems en las dos
+    /// secciones se ignora.
+    public init(count: Int, lowerSectionStart: Int?, columns: Int) {
+        self.count = count
+        self.columns = max(1, columns)
+        self.lowerSectionStart = lowerSectionStart.flatMap { (1..<count).contains($0) ? $0 : nil }
+    }
+
+    /// Filas de la sección de arriba (todas, si hay una sola sección).
+    private var upperRows: Int { rows(lowerSectionStart ?? count) }
+
+    private func rows(_ items: Int) -> Int { (items + columns - 1) / columns }
+
+    public var rowCount: Int { upperRows + rows(count - (lowerSectionStart ?? count)) }
+
+    /// Primera fila de la sección de abajo, o nil si no hay.
+    public var lowerSectionFirstRow: Int? { lowerSectionStart.map { _ in upperRows } }
+
+    public func position(of index: Int) -> Position {
+        if let start = lowerSectionStart, index >= start {
+            let offset = index - start
+            return Position(row: upperRows + offset / columns, column: offset % columns)
+        }
+        return Position(row: index / columns, column: index % columns)
+    }
+
+    /// Los índices de la fila.
+    func indices(ofRow row: Int) -> Range<Int> {
+        if let start = lowerSectionStart, row >= upperRows {
+            let first = start + (row - upperRows) * columns
+            return first..<min(first + columns, count)
+        }
+        let first = row * columns
+        return first..<min(first + columns, lowerSectionStart ?? count)
+    }
+
+    /// El ítem de la misma columna en otra fila; si esa fila no llega a la columna, su último ítem.
+    /// Nil si la fila no existe.
+    func index(movingFrom index: Int, rows offset: Int) -> Int? {
+        let position = position(of: index)
+        let row = position.row + offset
+        guard (0..<rowCount).contains(row) else { return nil }
+        let target = indices(ofRow: row)
+        return min(target.lowerBound + position.column, target.upperBound - 1)
     }
 }
 
@@ -144,13 +222,17 @@ public struct SwitcherItem: Sendable, Equatable {
     }
 }
 
-/// Los ítems de una Switch Session en orden: primero las Windows en Recency Order, después las
-/// Windowless Apps. Toda la aritmética de índices vive acá.
+/// Los ítems de una Switch Session en orden: primero las Windows abiertas en Recency Order, después
+/// las Minimized (también en Recency Order) y al final las Windowless Apps. Las abiertas son la
+/// sección de arriba; el resto, la de abajo. Toda la aritmética de índices vive acá.
 struct ItemList: Equatable {
     private(set) var ids: [ItemID]
+    /// Índice del primer ítem de la sección de abajo, si hay ítems en las dos secciones.
+    let lowerSectionStart: Int?
 
-    init(windows: [WindowID], windowless: [AppID]) {
-        ids = windows.map(ItemID.window) + windowless.map(ItemID.windowlessApp)
+    init(open: [WindowID], minimized: [WindowID] = [], windowless: [AppID]) {
+        ids = (open + minimized).map(ItemID.window) + windowless.map(ItemID.windowlessApp)
+        lowerSectionStart = !open.isEmpty && open.count < ids.count ? open.count : nil
     }
 
     var count: Int { ids.count }
@@ -248,6 +330,8 @@ public struct SwitcherState: Sendable {
         /// Columnas de la grilla del Window Switcher, según la vista; nil hasta que las informe.
         /// Siempre mayor que 0: se valida al recibir `switcherColumnsChanged`.
         var columns: Int?
+        /// El usuario ya movió la selección. Hasta entonces, cada foto nueva la recalcula.
+        private var hasMoved = false
 
         init(scope: Scope, config: SwitcherConfig, items: ItemList, startsBackwards: Bool, current: CurrentWindow) {
             self.scope = scope
@@ -262,10 +346,12 @@ public struct SwitcherState: Sendable {
 
         var selectedItem: ItemID? { items[selected] }
 
-        /// Cambian los ítems: la selección sigue a su ítem; si ese se fue, queda en la misma
-        /// posición (o en la última, si la grilla se achicó).
+        /// Cambian los ítems. Si el usuario todavía no movió la selección, se recalcula con los
+        /// ítems nuevos: la foto vieja puede tener abierta una Window recién Minimized. Si ya la
+        /// movió, sigue a su ítem; si ese se fue, queda en la misma posición (o en la última, si la
+        /// grilla se achicó).
         mutating func replaceItems(with newItems: ItemList, current: CurrentWindow) {
-            if items.count == 0 {
+            if items.count == 0 || !hasMoved {
                 selected = newItems.initialSelection(backwards: startsBackwards, current: current)
             } else if let item = selectedItem, let index = newItems.index(of: item) {
                 selected = index
@@ -294,12 +380,14 @@ public struct SwitcherState: Sendable {
         /// Mueve la selección y devuelve si quedó en un ítem. Anterior y siguiente dan la vuelta en
         /// los extremos; arriba y abajo no.
         mutating func move(_ direction: Direction) -> Bool {
-            switch direction {
-            case .previous: return step(by: -1)
-            case .next: return step(by: 1)
-            case .up: return moveUp()
-            case .down: return moveDown()
+            let moved = switch direction {
+            case .previous: step(by: -1)
+            case .next: step(by: 1)
+            case .up: moveRows(by: -1)
+            case .down: moveRows(by: 1)
             }
+            if moved { hasMoved = true }
+            return moved
         }
 
         private mutating func step(by offset: Int) -> Bool {
@@ -308,18 +396,14 @@ public struct SwitcherState: Sendable {
             return true
         }
 
-        /// Sube una fila según las columnas que informó la vista; en la primera fila no se mueve.
-        private mutating func moveUp() -> Bool {
-            guard let columns, selected >= columns else { return false }
-            select(selected - columns)
-            return true
-        }
-
-        /// Baja una fila según las columnas que informó la vista; en la última fila no se mueve.
-        /// Si cae en una columna que no existe en la última fila (incompleta), va al último ítem.
-        private mutating func moveDown() -> Bool {
-            guard let columns, selected / columns < (items.count - 1) / columns else { return false }
-            select(min(selected + columns, items.count - 1))
+        /// Sube o baja filas según la grilla con las columnas que informó la vista; en la primera o
+        /// la última fila no se mueve. Si cae en una columna que no existe en esa fila (incompleta),
+        /// va a su último ítem.
+        private mutating func moveRows(by offset: Int) -> Bool {
+            guard let columns else { return false }
+            let grid = SwitcherGrid(count: items.count, lowerSectionStart: items.lowerSectionStart, columns: columns)
+            guard let index = grid.index(movingFrom: selected, rows: offset) else { return false }
+            select(index)
             return true
         }
 
@@ -339,7 +423,12 @@ public struct SwitcherState: Sendable {
         mutating func syncSwitcher(with snapshot: Snapshot) -> [SwitcherEffect] {
             let shownItems = snapshot.items(for: items)
             let target = delayElapsed && !shownItems.isEmpty
-                ? panelScreen.map { SwitcherContent(shownItems, selected: selected, screen: $0, thumbnailSize: thumbnailSize) } : nil
+                ? panelScreen.map {
+                    SwitcherContent(
+                        shownItems, selected: selected, screen: $0, thumbnailSize: thumbnailSize,
+                        lowerSectionStart: items.lowerSectionStart
+                    )
+                } : nil
             defer { shown = target }
             switch (shown, target) {
             case (nil, let new?): return [.showSwitcher(new)]
@@ -510,17 +599,18 @@ public struct SwitcherCore: Sendable {
 
     /// Los ítems de una Switch Session del Scope con la foto actual.
     private static func items(_ state: SwitcherState, _ scope: Scope) -> ItemList {
-        ItemList(
-            windows: eligibleWindows(state, scope),
+        let windows = eligibleWindows(state, scope)
+        return ItemList(
+            open: windows.open, minimized: windows.minimized,
             windowless: windowlessApps(in: state.snapshot, scope: scope)
         )
     }
 
-    /// Las Windows del Scope en Recency Order, con las Minimized al final (también en Recency
-    /// Order): es más probable que se quiera saltar a una que no lo está. Current App: solo las de
+    /// Las Windows del Scope en Recency Order, separadas en abiertas y Minimized: las Minimized van
+    /// al final, porque es más probable que se quiera saltar a una que no lo está. Current App: solo las de
     /// la App activa. Reglas de inclusión: otros Spaces, otras pantallas, Minimized y Hidden Apps
     /// según la configuración (otros Spaces, solo si la foto los ubicó).
-    private static func eligibleWindows(_ state: SwitcherState, _ scope: Scope) -> [WindowID] {
+    private static func eligibleWindows(_ state: SwitcherState, _ scope: Scope) -> (open: [WindowID], minimized: [WindowID]) {
         let windowsByID = state.snapshot.windowsByID
         let includesOtherSpaces = state.config.includesOtherSpaces && state.snapshot.locatesOtherSpaces
         let eligible: [Window] = state.recency.compactMap { id in
@@ -533,7 +623,7 @@ public struct SwitcherCore: Sendable {
             else { return nil }
             return window
         }
-        return (eligible.filter { !$0.isMinimized } + eligible.filter(\.isMinimized)).map(\.id)
+        return (eligible.filter { !$0.isMinimized }.map(\.id), eligible.filter(\.isMinimized).map(\.id))
     }
 }
 
