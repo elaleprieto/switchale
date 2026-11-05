@@ -3,7 +3,8 @@ import ApplicationServices
 import SwitchaleCore
 
 /// Traduce cambios de foco (AX por App y NSWorkspace) en "una Window recibió foco" y
-/// "pasó a ser la App activa", y avisa cuando cambia el conjunto de Apps para refrescar la foto.
+/// "pasó a ser la App activa", y avisa cuando cambia el conjunto de Apps o una Window se minimiza o
+/// se restaura, para refrescar la foto.
 ///
 /// Para switchale misma no se usa AX: una consulta AX al propio proceso desde el main thread no
 /// puede responderse mientras el main thread espera, y bloquea hasta el timeout. Sus Windows
@@ -54,6 +55,11 @@ final class FocusTracker {
         } else {
             reportFocusedWindow(pid: app.processIdentifier)
         }
+    }
+
+    /// Una Window se minimizó o se restauró: hay que refrescar la foto.
+    func reportWindowsChanged() {
+        onAppsChanged()
     }
 
     /// Informa la Window enfocada de la App (si hay una). Nunca para switchale: ver arriba.
@@ -111,8 +117,12 @@ final class FocusTracker {
             scheduleRetryIfNeeded()
             return
         }
-        // La notificación de Window principal es complementaria: si falla no invalida el observer.
-        _ = AXObserverAddNotification(observer, appElement, kAXMainWindowChangedNotification as CFString, context)
+        // Las demás son complementarias: si fallan no invalidan el observer. Minimizar o restaurar
+        // una Window (registradas en la App, llegan por cualquiera de sus Windows) cambia el orden
+        // del Window Switcher, y sin esto la foto se enteraría recién en el próximo refresco.
+        for notification in [kAXMainWindowChangedNotification, kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification] {
+            _ = AXObserverAddNotification(observer, appElement, notification as CFString, context)
+        }
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         observers[pid] = observer
     }
@@ -139,6 +149,11 @@ final class FocusTracker {
 private func focusCallback(_ observer: AXObserver, _ element: AXUIElement, _ notification: CFString, _ context: UnsafeMutableRawPointer?) {
     guard let context else { return }
     let tracker = Unmanaged<FocusTracker>.fromOpaque(context).takeUnretainedValue()
+    let name = notification as String
+    if name == kAXWindowMiniaturizedNotification || name == kAXWindowDeminiaturizedNotification {
+        MainActor.assumeIsolated { tracker.reportWindowsChanged() }
+        return
+    }
     var pid: pid_t = 0
     guard AXUIElementGetPid(element, &pid) == .success else { return }
     MainActor.assumeIsolated { tracker.reportFocusedWindow(pid: pid) }

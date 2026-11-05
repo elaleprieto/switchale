@@ -31,7 +31,7 @@ codesign -dv build/DerivedData/Build/Products/Debug/switchale.app
 
 ## Versión
 
-La versión vive en `project.yml` (`CFBundleShortVersionString`, semver, y `CFBundleVersion`) y se muestra al pie de Preferencias. Con cada versión: subirla en `project.yml`, commitear y crear el tag `vX.Y.Z` sobre ese commit (`git tag vX.Y.Z && git push origin vX.Y.Z`).
+La versión vive en `project.yml` (`CFBundleShortVersionString`, semver, y `CFBundleVersion`, un número que sube de a uno con cada versión) y se muestra al pie de Preferencias. Con cada versión: subirla en `project.yml`, commitear y crear el tag `vX.Y.Z` sobre ese commit (`git tag vX.Y.Z && git push origin vX.Y.Z`).
 
 ## Permisos e inicio al loguearse
 
@@ -48,7 +48,7 @@ Se cambia en "Preferencias…" (barra de menú), con las pestañas General (Hotk
 - `allWindowsEnabled`, `currentAppEnabled` (Bool, por defecto `YES`): si es `NO`, el Hotkey del Scope hace lo que hace en macOS.
 - `allWindowsHotkeyModifier`, `currentAppHotkeyModifier` (`command`, `option`, `control` o `shift`) y `allWindowsHotkeyKey`, `currentAppHotkeyKey` (`tab` o `grave`): por defecto ⌘⇥ y ⌥`. Con ⇥ (y un modificador que no sea ⇧), el Hotkey con ⇧ retrocede. Los dos Scopes no pueden tener el mismo Hotkey: Preferencias no ofrece el del otro Scope (aunque esté desactivado); si se repite con `defaults write`, abre All Windows.
 - `activationDelayMilliseconds` (Int, 0 a 500 de a 10, por defecto `80`).
-- `includesMinimizedWindows`, `includesHiddenApps`, `includesOtherScreens` (Bool, por defecto `YES`): las Minimized Windows van al final, así que un Quick Switch solo salta a una si no hay otra; sin otras pantallas, solo entran las Windows de la pantalla actual, que es la de la Window con foco (o la del mouse si no hay una).
+- `includesMinimizedWindows`, `includesHiddenApps`, `includesOtherScreens` (Bool, por defecto `YES`): las Minimized Windows van al final, debajo de una línea junto con las Windowless Apps, así que un Quick Switch solo salta a una si no hay otra; sin otras pantallas, solo entran las Windows de la pantalla actual, que es la de la Window con foco (o la del mouse si no hay una).
 - `includesOtherSpaces` (Bool, por defecto `NO`): incluir las Windows de otros Spaces; activar una te lleva a su Space. Usa APIs privadas de SkyLight (ADR-0002), aisladas en `Sources/Switchale/Spaces.swift` y solo con la opción activada; si no están o fallan, es como si la opción estuviera desactivada.
 - `panelScreen` (`focusedWindow` por defecto, `mouse` o `primary`): en qué pantalla aparece el Window Switcher. Se decide al empezar la Switch Session y no cambia mientras dura.
 - `thumbnailWidth` (Int, 96 a 224 de a 16, por defecto `160`): ancho de las Thumbnails; el alto sigue la proporción 16:10.

@@ -10,6 +10,8 @@ final class WindowSwitcherView {
     private let panel: NSPanel
     private let background = NSVisualEffectView()
     private var cells: [SwitcherCell] = []
+    /// La línea entre las Windows abiertas y la sección de abajo, si hay.
+    private var divider: NSBox?
     /// La Thumbnail ya capturada de una Window, si hay. Se consulta al armar la grilla, así un
     /// cambio de contenido no deja las celdas sin imagen.
     var thumbnailProvider: (WindowID) -> CGImage? = { _ in nil }
@@ -108,22 +110,42 @@ final class WindowSwitcherView {
         let cell = Metrics.cellSize(for: content.thumbnailSize)
         let available = visible.width * Metrics.maxWidthFraction - 2 * Metrics.padding
         let fitting = Int((available + Metrics.spacing) / (cell.width + Metrics.spacing))
-        let columns = max(1, min(items.count, fitting))
-        let rows = max(1, (items.count + columns - 1) / columns)
+        // Con dos secciones, la más larga define el ancho: cada una empieza en su propia fila.
+        let lowerStart = content.lowerSectionStart ?? items.count
+        let widest = max(lowerStart, items.count - lowerStart)
+        let columns = max(1, min(widest, fitting))
+        let grid = content.grid(columns: columns)
+        let rows = max(1, grid.rowCount)
+        let sectionGap = grid.lowerSectionFirstRow == nil ? 0 : Metrics.sectionGap
 
         let gridWidth = CGFloat(columns) * cell.width + CGFloat(columns - 1) * Metrics.spacing
-        let gridHeight = CGFloat(rows) * cell.height + CGFloat(rows - 1) * Metrics.spacing
+        let gridHeight = CGFloat(rows) * cell.height + CGFloat(rows - 1) * Metrics.spacing + sectionGap
         let size = NSSize(width: gridWidth + 2 * Metrics.padding, height: gridHeight + 2 * Metrics.padding)
+        /// Borde superior de la fila, en coordenadas del panel.
+        func top(ofRow row: Int) -> CGFloat {
+            let gap = grid.lowerSectionFirstRow.map { row >= $0 ? sectionGap : 0 } ?? 0
+            return size.height - Metrics.padding - CGFloat(row) * (cell.height + Metrics.spacing) - gap
+        }
 
         cells.forEach { $0.removeFromSuperview() }
+        divider?.removeFromSuperview()
+        divider = nil
+        if let firstLowerRow = grid.lowerSectionFirstRow {
+            // La línea va en el medio del espacio entre la última fila de arriba y la primera de abajo.
+            let upperBottom = top(ofRow: firstLowerRow - 1) - cell.height
+            let lineY = (upperBottom + top(ofRow: firstLowerRow)) / 2
+            let line = NSBox(frame: NSRect(x: Metrics.padding, y: lineY, width: gridWidth, height: 1))
+            line.boxType = .separator
+            background.addSubview(line)
+            divider = line
+        }
         cells = items.enumerated().map { index, item in
-            let row = index / columns
-            let column = index % columns
-            // Todas las filas arrancan a la izquierda del bloque, también la última si está
-            // incompleta: así la columna i queda en la misma X en cada fila y ↑/↓ del núcleo, que
-            // navegan por índice (± columnas), coinciden con lo que se ve.
-            let x = Metrics.padding + CGFloat(column) * (cell.width + Metrics.spacing)
-            let y = size.height - Metrics.padding - CGFloat(row + 1) * cell.height - CGFloat(row) * Metrics.spacing
+            // Todas las filas arrancan a la izquierda del bloque, también las incompletas: así la
+            // columna i queda en la misma X en cada fila y ↑/↓ del núcleo, que navegan con la misma
+            // `SwitcherGrid`, coinciden con lo que se ve.
+            let position = grid.position(of: index)
+            let x = Metrics.padding + CGFloat(position.column) * (cell.width + Metrics.spacing)
+            let y = top(ofRow: position.row) - cell.height
 
             let view = SwitcherCell(frame: NSRect(origin: NSPoint(x: x, y: y), size: cell))
             view.configure(title: item.title, icon: Self.icon(for: item.appID), mark: item.mark)
@@ -170,6 +192,8 @@ private enum Metrics {
     static let markerSize: CGFloat = 24
     static let markedIconAlpha: CGFloat = 0.5
     static let spacing: CGFloat = 8
+    /// Espacio extra entre las Windows abiertas y la sección de abajo, con la línea en el medio.
+    static let sectionGap: CGFloat = 16
     static let padding: CGFloat = 20
     static let cornerRadius: CGFloat = 18
     /// Fracción del ancho de la pantalla que puede ocupar la grilla antes de pasar a otra fila.
