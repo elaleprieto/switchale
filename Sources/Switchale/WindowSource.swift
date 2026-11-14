@@ -35,6 +35,8 @@ final class WindowSource {
     private let onSnapshot: (Snapshot) -> Void
     private let queue = DispatchQueue(label: "com.aleprieto.switchale.window-source", qos: .userInteractive)
     private var isCapturing = false
+    /// Windows de cada App en la última foto, para cuando AX no contesta la lista de una App.
+    private var lastByApp: [pid_t: [AppWindow]] = [:]
     private var needsAnotherCapture = false
 
     init(includesOtherSpaces: @escaping () -> Bool, onSnapshot: @escaping (Snapshot) -> Void) {
@@ -54,7 +56,8 @@ final class WindowSource {
             apps: NSWorkspace.shared.runningApplications.filter { $0.listsWindowsInSwitcher && !$0.isTerminated },
             frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
             screens: Screens(mouse: Self.mouseScreen(), primary: ScreenID(display: CGMainDisplayID())),
-            includesOtherSpaces: includesOtherSpaces()
+            includesOtherSpaces: includesOtherSpaces(),
+            previous: lastByApp
         )
         queue.async { [weak self] in
             let capture = Self.capture(input)
@@ -67,6 +70,7 @@ final class WindowSource {
     private func deliver(_ capture: Capture) {
         isCapturing = false
         handles = capture.handles
+        lastByApp = capture.byApp
         onSnapshot(capture.snapshot)
         if needsAnotherCapture {
             needsAnotherCapture = false
@@ -83,11 +87,19 @@ final class WindowSource {
         let frontmostPID: pid_t?
         let screens: Screens
         let includesOtherSpaces: Bool
+        let previous: [pid_t: [AppWindow]]
     }
 
     private struct Capture: @unchecked Sendable {
         let snapshot: Snapshot
         let handles: [WindowID: WindowHandle]
+        let byApp: [pid_t: [AppWindow]]
+    }
+
+    /// Una Window de la foto con lo necesario para activarla.
+    private struct AppWindow {
+        let window: Window
+        let handle: WindowHandle
     }
 
     private nonisolated static func capture(_ input: CaptureInput) -> Capture {
@@ -99,6 +111,7 @@ final class WindowSource {
         var windowlessApps: [AppID] = []
         var apps: [AppInfo] = []
         var newHandles: [WindowID: WindowHandle] = [:]
+        var byApp: [pid_t: [AppWindow]] = [:]
         /// Todas las ventanas que lista AX, sean Windows o no: las de otros Spaces son las que no.
         var axListed = Set<WindowID>()
         // Con la opción desactivada no se llama a `Spaces` (ni a ninguna API privada de SkyLight).
@@ -109,10 +122,33 @@ final class WindowSource {
             let appID = AppID(pid: app.processIdentifier)
             apps.append(AppInfo(id: appID, name: app.localizedName ?? ""))
             let appElement = axApplicationElement(pid: app.processIdentifier)
-            let axWindows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement] ?? []
-            var hasWindows = false
+            let axWindows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement]
+            var appWindows: [AppWindow] = []
+            defer {
+                byApp[app.processIdentifier] = appWindows
+                for appWindow in appWindows {
+                    windows.append(appWindow.window)
+                    newHandles[appWindow.window.id] = appWindow.handle
+                }
+            }
 
-            for element in axWindows {
+            // AX a veces no contesta a tiempo aunque la App ande bien (pasa varias veces por
+            // minuto). Sin la lista, sus Windows faltarían en esta foto: el núcleo las daría por
+            // cerradas, las sacaría del Recency Order y volverían al final en la foto siguiente.
+            // Se conservan las de la foto anterior que siguen existiendo en CoreGraphics.
+            if axWindows == nil, let previous = input.previous[app.processIdentifier] {
+                for old in previous {
+                    let id = old.window.id
+                    guard let entry = cg.entries[id] else { continue }
+                    axListed.insert(id)
+                    var window = old.window
+                    window.stackIndex = entry.stackIndex
+                    window.isAppHidden = app.isHidden
+                    appWindows.append(AppWindow(window: window, handle: old.handle))
+                }
+            }
+
+            for element in axWindows ?? [] {
                 let id = axWindowID(element)
                 if let id { axListed.insert(id) }
                 // Si el id no está en CGWindowList (o no es de la capa normal), no es una Window.
@@ -134,20 +170,21 @@ final class WindowSource {
                     // actual.
                     isInCurrentSpace = cg.onScreenIDs.contains(id) || isMinimized || app.isHidden
                 }
-                windows.append(window(
-                    id, of: app, title: (axAttribute(element, kAXTitleAttribute) as? String) ?? "", entry: entry,
-                    isInCurrentSpace: isInCurrentSpace, isMinimized: isMinimized, screens: input.screens
+                appWindows.append(AppWindow(
+                    window: window(
+                        id, of: app, title: (axAttribute(element, kAXTitleAttribute) as? String) ?? "", entry: entry,
+                        isInCurrentSpace: isInCurrentSpace, isMinimized: isMinimized, screens: input.screens
+                    ),
+                    handle: WindowHandle(
+                        id: id, app: app,
+                        location: otherSpacesIDs?.contains(id) == true ? .otherSpace(element) : .currentSpace(element)
+                    )
                 ))
-                newHandles[id] = WindowHandle(
-                    id: id, app: app,
-                    location: otherSpacesIDs?.contains(id) == true ? .otherSpace(element) : .currentSpace(element)
-                )
-                hasWindows = true
             }
             // Windowless: sin Windows nuestras y sin ventanas normales en CoreGraphics (que sí ve
             // las de otros Spaces, que AX no lista). Nunca Finder ni switchale: las dos corren
             // siempre, así que serían una entrada fija al final del Window Switcher.
-            if !hasWindows, !cg.pidsWithNormalWindows.contains(app.processIdentifier), app.canBeWindowless {
+            if appWindows.isEmpty, !cg.pidsWithNormalWindows.contains(app.processIdentifier), app.canBeWindowless {
                 windowlessApps.append(appID)
             }
         }
@@ -173,7 +210,8 @@ final class WindowSource {
                 windows: windows, apps: apps, focusedWindow: focusedWindow, screens: input.screens,
                 windowlessApps: windowlessApps, locatesOtherSpaces: otherSpacesIDs != nil
             ),
-            handles: newHandles
+            handles: newHandles,
+            byApp: byApp
         )
     }
 
