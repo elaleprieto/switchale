@@ -98,7 +98,6 @@ final class WindowSwitcherView {
     }
 
     func hide() {
-        cells.forEach { $0.releaseCursor() }
         content = nil
         panel.orderOut(nil)
     }
@@ -133,10 +132,7 @@ final class WindowSwitcherView {
             return size.height - Metrics.padding - CGFloat(row) * (cell.height + Metrics.spacing) - gap
         }
 
-        cells.forEach {
-            $0.releaseCursor()
-            $0.removeFromSuperview()
-        }
+        cells.forEach { $0.removeFromSuperview() }
         divider?.removeFromSuperview()
         divider = nil
         if let firstLowerRow = grid.lowerSectionFirstRow {
@@ -247,16 +243,14 @@ private final class SwitcherCell: NSView {
         didSet { closeView.isHidden = !isHovered }
     }
 
-    /// La zona de la ✕, aparte de la de toda la celda: entrar en ella cambia el cursor.
+    /// La zona de la ✕, aparte de la de toda la celda: entrar en ella la pone roja. El cursor no
+    /// cambia: macOS no deja que una App de fondo lo cambie, y switchale nunca es la App activa
+    /// con el Window Switcher abierto.
     private var closeTracking: NSTrackingArea?
 
-    /// El mouse está sobre la ✕: cursor de mano, como un link; al salir, la flecha.
+    /// El mouse está sobre la ✕.
     private var isOverClose = false {
-        didSet {
-            guard isOverClose != oldValue else { return }
-            (isOverClose ? NSCursor.pointingHand : NSCursor.arrow).set()
-            updateCloseLook()
-        }
+        didSet { updateCloseLook() }
     }
 
     /// La ✕ de cada estado, dibujadas una sola vez.
@@ -405,10 +399,6 @@ private final class SwitcherCell: NSView {
         isHovered = bounds.contains(location)
         isOverClose = closeView.frame.contains(location)
     }
-
-    /// Si el cursor quedó en mano, lo devuelve a la flecha: la celda se va (se rehace la grilla o
-    /// se oculta el Window Switcher) y ya no va a recibir `mouseExited`.
-    func releaseCursor() { isOverClose = false }
 
     override func mouseEntered(with event: NSEvent) {
         if event.trackingArea === closeTracking { isOverClose = true } else { isHovered = true }
