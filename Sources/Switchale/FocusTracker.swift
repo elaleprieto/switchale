@@ -14,6 +14,12 @@ final class FocusTracker {
     private var observers: [pid_t: AXObserver] = [:]
     private var tokens: [NSObjectProtocol] = []
     private var retryTimer: Timer?
+    /// Apps recién lanzadas cuyo observer todavía no se pudo registrar, con los intentos que van.
+    private var launchRetries: [pid_t: Int] = [:]
+    /// Una App recién lanzada puede tardar en atender AX (las de JetBrains, ~1 s al arrancar la
+    /// JVM): se reintenta cada `launchRetryInterval` hasta `maxLaunchRetries` veces.
+    private static let launchRetryInterval: TimeInterval = 0.5
+    private static let maxLaunchRetries = 40
     private let onFocus: (WindowID) -> Void
     private let onAppActivated: (AppID) -> Void
     private let onAppsChanged: () -> Void
@@ -32,10 +38,11 @@ final class FocusTracker {
         observeAllApps()
 
         observeWorkspace(NSWorkspace.didLaunchApplicationNotification) { [weak self] app in
-            self?.observe(app)
+            self?.observe(app, retryingAfterLaunch: true)
             self?.onAppsChanged()
         }
         observeWorkspace(NSWorkspace.didTerminateApplicationNotification) { [weak self] app in
+            self?.launchRetries[app.processIdentifier] = nil
             self?.forget(app.processIdentifier)
             self?.onAppsChanged()
         }
@@ -101,21 +108,47 @@ final class FocusTracker {
         }
     }
 
-    /// Registra el observer de AX de la App. Si falla (p. ej. sin Accesibilidad) no deja nada
-    /// registrado y se reintenta cuando haya Accesibilidad.
-    private func observe(_ app: NSRunningApplication) {
+    /// Registra el observer de AX de la App. Si falla sin Accesibilidad no deja nada registrado y se
+    /// reintenta cuando haya Accesibilidad. Si falla con Accesibilidad en una App recién lanzada, es
+    /// que todavía no atiende AX: se reintenta en un rato y, al registrarlo, se informa su Window
+    /// enfocada, porque el cambio de foco de su primera Window ya pasó sin observer.
+    private func observe(_ app: NSRunningApplication, retryingAfterLaunch: Bool = false) {
         let pid = app.processIdentifier
         guard observers[pid] == nil, !app.isSwitchale else { return }
-        var created: AXObserver?
-        guard AXObserverCreate(pid, focusCallback, &created) == .success, let observer = created else {
+        if register(pid) {
+            if launchRetries.removeValue(forKey: pid) != nil, app.isActive {
+                reportFocusedWindow(pid: pid)
+                onAppsChanged()
+            }
+            return
+        }
+        guard AXIsProcessTrusted() else {
             scheduleRetryIfNeeded()
             return
         }
+        guard retryingAfterLaunch, !app.isTerminated else { return }
+        let attempt = launchRetries[pid, default: 0] + 1
+        guard attempt <= Self.maxLaunchRetries else {
+            launchRetries[pid] = nil
+            return
+        }
+        launchRetries[pid] = attempt
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.launchRetryInterval) { [weak self, app] in
+            MainActor.assumeIsolated {
+                guard let self, self.launchRetries[pid] != nil else { return }
+                self.observe(app, retryingAfterLaunch: true)
+            }
+        }
+    }
+
+    /// Crea el observer de AX de la App y lo deja registrado. Devuelve false si AX no lo aceptó.
+    private func register(_ pid: pid_t) -> Bool {
+        var created: AXObserver?
+        guard AXObserverCreate(pid, focusCallback, &created) == .success, let observer = created else { return false }
         let appElement = AXUIElementCreateApplication(pid)
         let context = Unmanaged.passUnretained(self).toOpaque()
         guard AXObserverAddNotification(observer, appElement, kAXFocusedWindowChangedNotification as CFString, context) == .success else {
-            scheduleRetryIfNeeded()
-            return
+            return false
         }
         // Las demás son complementarias: si fallan no invalidan el observer. Minimizar o restaurar
         // una Window (registradas en la App, llegan por cualquiera de sus Windows) cambia el orden
@@ -125,6 +158,7 @@ final class FocusTracker {
         }
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         observers[pid] = observer
+        return true
     }
 
     private func scheduleRetryIfNeeded() {
