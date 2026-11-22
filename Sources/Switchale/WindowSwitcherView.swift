@@ -199,7 +199,9 @@ private enum Metrics {
     static let thumbnailCornerRadius: CGFloat = 6
     static let markerSize: CGFloat = 24
     /// La ✕ que aparece con el mouse encima, en la esquina superior izquierda de la Thumbnail.
-    static let closeButtonSize: CGFloat = 20
+    static let closeButtonSize: CGFloat = 22
+    /// Ancho del borde blanco de la ✕: la separa de Thumbnails oscuras.
+    static let closeButtonBorder: CGFloat = 2
     /// Cuánto sobresale la ✕ de la esquina de la Thumbnail.
     static let closeButtonOverhang: CGFloat = 6
     static let markedIconAlpha: CGFloat = 0.5
@@ -294,10 +296,14 @@ private final class SwitcherCell: NSView {
             y: thumbnailArea.maxY + Metrics.closeButtonOverhang - closeSize,
             width: closeSize, height: closeSize
         )
-        closeView.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Cerrar")?
-            .withSymbolConfiguration(.init(pointSize: closeSize, weight: .regular)
-                .applying(.init(paletteColors: [.white, .black.withAlphaComponent(0.7)])))
-        closeView.imageScaling = .scaleProportionallyUpOrDown
+        closeView.image = Self.closeImage(size: closeSize)
+        closeView.imageScaling = .scaleNone
+        // Sombra suave: separa la ✕ de Thumbnails claras, donde el borde blanco no se ve.
+        let shadow = NSShadow()
+        shadow.shadowColor = .black.withAlphaComponent(0.5)
+        shadow.shadowBlurRadius = 3
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        closeView.shadow = shadow
         closeView.toolTip = "Cerrar"
         closeView.isHidden = true
 
@@ -315,6 +321,31 @@ private final class SwitcherCell: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) no se usa") }
+
+    /// La ✕: círculo oscuro con borde blanco y la cruz blanca en el centro. Colores fijos (no
+    /// dinámicos), así se ve igual en modo claro y oscuro sobre cualquier Thumbnail.
+    private static func closeImage(size: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            let border = Metrics.closeButtonBorder
+            NSColor(white: 0.2, alpha: 1).setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: border, dy: border)).fill()
+            let config = NSImage.SymbolConfiguration(pointSize: size * 0.45, weight: .bold)
+                .applying(.init(paletteColors: [.white]))
+            if let mark = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) {
+                let markSize = mark.size
+                mark.draw(in: NSRect(
+                    x: rect.midX - markSize.width / 2, y: rect.midY - markSize.height / 2,
+                    width: markSize.width, height: markSize.height
+                ))
+            }
+            return true
+        }
+        image.accessibilityDescription = "Cerrar"
+        return image
+    }
 
     func configure(title: String, icon: NSImage?, mark: WindowMark) {
         // Marca visual: ícono atenuado y un símbolo en la esquina (minimizada u oculta).
