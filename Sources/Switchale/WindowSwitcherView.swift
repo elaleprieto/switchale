@@ -98,6 +98,7 @@ final class WindowSwitcherView {
     }
 
     func hide() {
+        cells.forEach { $0.releaseCursor() }
         content = nil
         panel.orderOut(nil)
     }
@@ -132,7 +133,10 @@ final class WindowSwitcherView {
             return size.height - Metrics.padding - CGFloat(row) * (cell.height + Metrics.spacing) - gap
         }
 
-        cells.forEach { $0.removeFromSuperview() }
+        cells.forEach {
+            $0.releaseCursor()
+            $0.removeFromSuperview()
+        }
         divider?.removeFromSuperview()
         divider = nil
         if let firstLowerRow = grid.lowerSectionFirstRow {
@@ -235,10 +239,38 @@ private final class SwitcherCell: NSView {
     private let closeView = NSImageView()
     private var thumbnailArea = NSRect.zero
     /// El clic empezó sobre la ✕: al soltar dentro de ella cierra en vez de activar.
-    private var pressedClose = false
+    private var pressedClose = false {
+        didSet { updateCloseLook() }
+    }
 
     private var isHovered = false {
         didSet { closeView.isHidden = !isHovered }
+    }
+
+    /// La zona de la ✕, aparte de la de toda la celda: entrar en ella cambia el cursor.
+    private var closeTracking: NSTrackingArea?
+
+    /// El mouse está sobre la ✕: cursor de mano, como un link; al salir, la flecha.
+    private var isOverClose = false {
+        didSet {
+            guard isOverClose != oldValue else { return }
+            (isOverClose ? NSCursor.pointingHand : NSCursor.arrow).set()
+            updateCloseLook()
+        }
+    }
+
+    /// La ✕ de cada estado, dibujadas una sola vez.
+    private static let closeImages = (
+        normal: closeImage(fill: NSColor(white: 0.2, alpha: 1)),
+        hovered: closeImage(fill: NSColor(srgbRed: 1, green: 0.37, blue: 0.34, alpha: 1)),
+        pressed: closeImage(fill: NSColor(srgbRed: 0.75, green: 0.2, blue: 0.18, alpha: 1))
+    )
+
+    /// Normal, roja con el mouse encima, y roja oscura mientras se aprieta con el mouse encima
+    /// (si se arrastra afuera con el botón apretado, vuelve a la normal, como un botón de macOS).
+    private func updateCloseLook() {
+        let images = Self.closeImages
+        closeView.image = !isOverClose ? images.normal : (pressedClose ? images.pressed : images.hovered)
     }
 
     var isSelected = false {
@@ -296,7 +328,7 @@ private final class SwitcherCell: NSView {
             y: thumbnailArea.maxY + Metrics.closeButtonOverhang - closeSize,
             width: closeSize, height: closeSize
         )
-        closeView.image = Self.closeImage(size: closeSize)
+        closeView.image = Self.closeImages.normal
         closeView.imageScaling = .scaleNone
         // Sombra suave: separa la ✕ de Thumbnails claras, donde el borde blanco no se ve.
         let shadow = NSShadow()
@@ -317,19 +349,26 @@ private final class SwitcherCell: NSView {
         addTrackingArea(NSTrackingArea(
             rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self
         ))
+        // `.activeAlways`: switchale nunca es la App activa mientras se muestra el Window Switcher.
+        let closeTracking = NSTrackingArea(
+            rect: closeView.frame, options: [.mouseEnteredAndExited, .activeAlways], owner: self
+        )
+        addTrackingArea(closeTracking)
+        self.closeTracking = closeTracking
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) no se usa") }
 
-    /// La ✕: círculo oscuro con borde blanco y la cruz blanca en el centro. Colores fijos (no
-    /// dinámicos), así se ve igual en modo claro y oscuro sobre cualquier Thumbnail.
-    private static func closeImage(size: CGFloat) -> NSImage {
+    /// La ✕: círculo de este color con borde blanco y la cruz blanca en el centro. Colores fijos
+    /// (no dinámicos), así se ve igual en modo claro y oscuro sobre cualquier Thumbnail.
+    private static func closeImage(fill: NSColor) -> NSImage {
+        let size = Metrics.closeButtonSize
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             NSColor.white.setFill()
             NSBezierPath(ovalIn: rect).fill()
             let border = Metrics.closeButtonBorder
-            NSColor(white: 0.2, alpha: 1).setFill()
+            fill.setFill()
             NSBezierPath(ovalIn: rect.insetBy(dx: border, dy: border)).fill()
             let config = NSImage.SymbolConfiguration(pointSize: size * 0.45, weight: .bold)
                 .applying(.init(paletteColors: [.white]))
@@ -364,10 +403,20 @@ private final class SwitcherCell: NSView {
         guard let window else { return }
         let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
         isHovered = bounds.contains(location)
+        isOverClose = closeView.frame.contains(location)
     }
 
-    override func mouseEntered(with event: NSEvent) { isHovered = true }
-    override func mouseExited(with event: NSEvent) { isHovered = false }
+    /// Si el cursor quedó en mano, lo devuelve a la flecha: la celda se va (se rehace la grilla o
+    /// se oculta el Window Switcher) y ya no va a recibir `mouseExited`.
+    func releaseCursor() { isOverClose = false }
+
+    override func mouseEntered(with event: NSEvent) {
+        if event.trackingArea === closeTracking { isOverClose = true } else { isHovered = true }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if event.trackingArea === closeTracking { isOverClose = false } else { isHovered = false }
+    }
 
     /// Cómo se ve cada marca: símbolo, nota (tooltip y accesibilidad) y alpha del ícono.
     private static func look(of mark: WindowMark) -> (symbol: String?, note: String?, alpha: CGFloat) {
@@ -390,6 +439,12 @@ private final class SwitcherCell: NSView {
     // el clic se resuelve en `mouseUp`; acá solo se anota si empezó sobre la ✕.
     override func mouseDown(with event: NSEvent) {
         pressedClose = isOnClose(event)
+    }
+
+    /// Arrastrando con el botón apretado, la ✕ se ve apretada solo mientras el mouse está sobre ella.
+    override func mouseDragged(with event: NSEvent) {
+        guard pressedClose else { return }
+        isOverClose = isOnClose(event)
     }
 
     /// El clic cuenta al soltar el botón dentro de la celda, como un botón. Si empezó sobre la ✕,
