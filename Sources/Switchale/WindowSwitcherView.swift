@@ -4,7 +4,7 @@ import SwitchaleCore
 /// El Window Switcher en pantalla: un `NSPanel` no activante con fondo translúcido y una grilla
 /// centrada en la pantalla que pasa a la siguiente fila cuando no entra. Solo dibuja lo que pide
 /// el núcleo; el teclado lo recibe el event tap, así que el `NSPanel` nunca toma foco. Le informa
-/// al núcleo los clics en las celdas y cuántas columnas tiene la grilla.
+/// al núcleo los clics en las celdas y en su ✕, y cuántas columnas tiene la grilla.
 @MainActor
 final class WindowSwitcherView {
     private let panel: NSPanel
@@ -22,10 +22,15 @@ final class WindowSwitcherView {
     /// el núcleo arranca cada Switch Session sin columnas.
     private var reportedColumns: Int?
     private let onClick: (ItemID) -> Void
+    private let onClose: (ItemID) -> Void
     private let onColumnsChanged: (Int) -> Void
 
-    init(onClick: @escaping (ItemID) -> Void, onColumnsChanged: @escaping (Int) -> Void) {
+    init(
+        onClick: @escaping (ItemID) -> Void, onClose: @escaping (ItemID) -> Void,
+        onColumnsChanged: @escaping (Int) -> Void
+    ) {
         self.onClick = onClick
+        self.onClose = onClose
         self.onColumnsChanged = onColumnsChanged
         panel = NSPanel(
             contentRect: .zero,
@@ -153,12 +158,15 @@ final class WindowSwitcherView {
             if case .window(let window) = item.id { view.thumbnail = thumbnailProvider(window) }
             view.isSelected = index == content.selected
             view.onClick = { [weak self] in self?.onClick(item.id) }
+            view.onClose = { [weak self] in self?.onClose(item.id) }
             background.addSubview(view)
             return view
         }
 
         let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        // Las celdas son nuevas: la que ya tiene el mouse encima no recibe `mouseEntered`.
+        cells.forEach { $0.updateHover() }
         reportColumnsIfChanged(columns)
     }
 
@@ -190,6 +198,10 @@ private enum Metrics {
     static let badgeIconMargin: CGFloat = 4
     static let thumbnailCornerRadius: CGFloat = 6
     static let markerSize: CGFloat = 24
+    /// La ✕ que aparece con el mouse encima, en la esquina superior izquierda de la Thumbnail.
+    static let closeButtonSize: CGFloat = 20
+    /// Cuánto sobresale la ✕ de la esquina de la Thumbnail.
+    static let closeButtonOverhang: CGFloat = 6
     static let markedIconAlpha: CGFloat = 0.5
     static let spacing: CGFloat = 8
     /// Espacio extra entre las Windows abiertas y la sección de abajo, con la línea en el medio.
@@ -211,13 +223,21 @@ private enum Metrics {
 }
 
 /// Una celda de la grilla: la Thumbnail de la Window con el ícono de la App encima y, debajo,
-/// el título. Mientras no hay Thumbnail muestra solo el ícono grande y el título.
+/// el título. Mientras no hay Thumbnail muestra solo el ícono grande y el título. Con el mouse
+/// encima muestra una ✕ que cierra la Window (o la App, si es una Windowless App).
 private final class SwitcherCell: NSView {
     private let thumbnailView = NSImageView()
     private let iconView = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let markerView = NSImageView()
+    private let closeView = NSImageView()
     private var thumbnailArea = NSRect.zero
+    /// El clic empezó sobre la ✕: al soltar dentro de ella cierra en vez de activar.
+    private var pressedClose = false
+
+    private var isHovered = false {
+        didSet { closeView.isHidden = !isHovered }
+    }
 
     var isSelected = false {
         didSet { needsDisplay = true }
@@ -234,6 +254,7 @@ private final class SwitcherCell: NSView {
     }
 
     var onClick: (() -> Void)?
+    var onClose: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -266,11 +287,30 @@ private final class SwitcherCell: NSView {
         iconView.imageScaling = .scaleProportionallyUpOrDown
         markerView.contentTintColor = .secondaryLabelColor
         markerView.isHidden = true
+
+        let closeSize = Metrics.closeButtonSize
+        closeView.frame = NSRect(
+            x: thumbnailArea.minX - Metrics.closeButtonOverhang,
+            y: thumbnailArea.maxY + Metrics.closeButtonOverhang - closeSize,
+            width: closeSize, height: closeSize
+        )
+        closeView.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Cerrar")?
+            .withSymbolConfiguration(.init(pointSize: closeSize, weight: .regular)
+                .applying(.init(paletteColors: [.white, .black.withAlphaComponent(0.7)])))
+        closeView.imageScaling = .scaleProportionallyUpOrDown
+        closeView.toolTip = "Cerrar"
+        closeView.isHidden = true
+
         addSubview(thumbnailView)
         addSubview(iconView)
         addSubview(markerView)
         addSubview(label)
+        addSubview(closeView)
         layoutIcon()
+
+        addTrackingArea(NSTrackingArea(
+            rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self
+        ))
     }
 
     @available(*, unavailable)
@@ -287,6 +327,16 @@ private final class SwitcherCell: NSView {
         markerView.image = look.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: look.note) }
         markerView.isHidden = look.symbol == nil
     }
+
+    /// Muestra la ✕ si el mouse está sobre la celda: al rehacer la grilla no llega `mouseEntered`.
+    func updateHover() {
+        guard let window else { return }
+        let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        isHovered = bounds.contains(location)
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
 
     /// Cómo se ve cada marca: símbolo, nota (tooltip y accesibilidad) y alpha del ícono.
     private static func look(of mark: WindowMark) -> (symbol: String?, note: String?, alpha: CGFloat) {
@@ -305,14 +355,26 @@ private final class SwitcherCell: NSView {
         frame.contains(point) ? self : nil
     }
 
-    // Vacío a propósito: la celda se queda con el mouseDown (por defecto `NSView` lo pasa al
-    // responder siguiente) y el clic se resuelve en `mouseUp`.
-    override func mouseDown(with event: NSEvent) {}
+    // La celda se queda con el mouseDown (por defecto `NSView` lo pasa al responder siguiente) y
+    // el clic se resuelve en `mouseUp`; acá solo se anota si empezó sobre la ✕.
+    override func mouseDown(with event: NSEvent) {
+        pressedClose = isOnClose(event)
+    }
 
-    /// El clic cuenta al soltar el botón dentro de la celda, como un botón.
+    /// El clic cuenta al soltar el botón dentro de la celda, como un botón. Si empezó sobre la ✕,
+    /// cuenta solo si se suelta sobre la ✕, y cierra.
     override func mouseUp(with event: NSEvent) {
+        defer { pressedClose = false }
+        if pressedClose {
+            if isOnClose(event) { onClose?() }
+            return
+        }
         guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
         onClick?()
+    }
+
+    private func isOnClose(_ event: NSEvent) -> Bool {
+        !closeView.isHidden && closeView.frame.contains(convert(event.locationInWindow, from: nil))
     }
 
     private func layoutIcon() {

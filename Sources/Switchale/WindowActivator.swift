@@ -135,4 +135,28 @@ struct WindowActivator {
             }
         }
     }
+
+    /// Cierra la Window con su botón de cerrar de AX, como el clic en el botón rojo: la App puede
+    /// pedir confirmación (cambios sin guardar). Una Window de switchale se cierra con AppKit; una
+    /// de otro Space que AX no lista no se puede cerrar.
+    func close(_ handle: WindowHandle) {
+        if handle.app.isSwitchale {
+            NSApp.window(withWindowNumber: handle.id.rawValue)?.performClose(nil)
+            return
+        }
+        let element: AXUIElement? = switch handle.location {
+        case .currentSpace(let element): element
+        case .otherSpace(let element): element
+        }
+        guard let element,
+              let button = axAttribute(element, kAXCloseButtonAttribute),
+              CFGetTypeID(button) == AXUIElementGetTypeID()
+        else { return }
+        AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString)
+    }
+
+    /// Cierra la App (Quit), como ⌘Q: la App puede pedir confirmación o negarse.
+    func quitApp(pid: pid_t) {
+        NSRunningApplication(processIdentifier: pid)?.terminate()
+    }
 }

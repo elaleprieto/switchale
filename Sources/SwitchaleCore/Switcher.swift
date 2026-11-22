@@ -84,6 +84,9 @@ public enum SwitcherEvent: Sendable, Equatable {
     case switcherColumnsChanged(Int)
     /// Clic en la celda de este ítem (Window o Windowless App) en el Window Switcher.
     case itemClicked(ItemID)
+    /// Clic en la ✕ de la celda de este ítem: cerrar la Window o, si es una Windowless App, cerrar
+    /// la App. El Window Switcher sigue abierto; el ítem sale con la foto que ya no lo tiene.
+    case closeClicked(ItemID)
 }
 
 public enum SwitcherEffect: Sendable, Equatable {
@@ -92,6 +95,11 @@ public enum SwitcherEffect: Sendable, Equatable {
     case activate(WindowID)
     /// Activar una Windowless App como el clic en su ícono del Dock (reopen).
     case activateApp(AppID)
+    /// Cerrar la Window como su botón de cerrar (puede pedir confirmación, p. ej. si hay cambios
+    /// sin guardar).
+    case closeWindow(WindowID)
+    /// Cerrar la App (Quit), como ⌘Q.
+    case quitApp(AppID)
     /// Pedir una foto fresca de las Windows (de forma asíncrona).
     case refreshSnapshot
     /// El evento de teclado no debe llegar al sistema. Sin este efecto pasa.
@@ -508,6 +516,14 @@ public struct SwitcherCore: Sendable {
             guard let session = next.session, session.isSwitcherVisible else { return (next, []) }
             next.session = nil
             return (next, session.finishEffects(activating: id))
+
+        case .closeClicked(let id):
+            guard let session = next.session, session.isSwitcherVisible, session.items.index(of: id) != nil
+            else { return (next, []) }
+            switch id {
+            case .window(let window): return (next, [.closeWindow(window)])
+            case .windowlessApp(let app): return (next, [.quitApp(app)])
+            }
 
         case .activationDelayElapsed:
             guard var session = next.session else { return (next, []) }

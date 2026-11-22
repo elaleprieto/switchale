@@ -29,6 +29,7 @@ final class Orchestrator {
     private let activator = WindowActivator()
     private lazy var switcherView = WindowSwitcherView(
         onClick: { [weak self] id in self?.dispatch(.itemClicked(id)) },
+        onClose: { [weak self] id in self?.dispatch(.closeClicked(id)) },
         onColumnsChanged: { [weak self] columns in self?.dispatch(.switcherColumnsChanged(columns)) }
     )
     private var activationTimer: Timer?
@@ -99,6 +100,13 @@ final class Orchestrator {
                 activator.activateApp(pid: app.pid) { [weak self] succeeded in
                     if !succeeded { self?.dispatch(.appActivationFailed(app)) }
                 }
+            case .closeWindow(let id):
+                if let handle = source.handles[id] { activator.close(handle) }
+                // La Window sale del Window Switcher con la próxima foto que ya no la tenga.
+                source.refresh()
+            case .quitApp(let app):
+                activator.quitApp(pid: app.pid)
+                source.refresh()
             case .refreshSnapshot:
                 source.refresh()
             case .consumeEvent:
