@@ -63,5 +63,5 @@ El permiso de macOS que hace falta para capturar el contenido de otras Windows. 
 _Avoid_: Screen capture permission
 
 **Screen**:
-Una pantalla (monitor). La pantalla actual es la de la Window con foco o, si no hay una, la del mouse; el Window Switcher aparece en la que elige la configuración y no cambia durante la Switch Session.
+Una pantalla (monitor). La pantalla actual es la de la Window con foco o, si no hay una, la del mouse; el Window Switcher aparece en la que elige la configuración y no cambia durante la Switch Session. Si la foto de la Switch Session tarda, el Window Switcher aparece igual con la última conocida y, si hace falta, se corrige una sola vez cuando llega.
 _Avoid_: Display, monitor

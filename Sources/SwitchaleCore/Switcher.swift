@@ -326,8 +326,12 @@ public struct SwitcherState: Sendable {
         let thumbnailSize: ThumbnailSize
         var delayElapsed = false
         /// Pantalla donde aparece el Window Switcher. Se decide con la primera foto de la sesión
-        /// (la que pide al arrancar, no la vieja) y no cambia hasta que termina.
+        /// (la que pide al arrancar, no la vieja) y no cambia hasta que termina. Si esa foto no
+        /// llegó al vencer el Activation Delay (una App que tarda en contestar AX), el panel no la
+        /// espera: aparece en una pantalla provisional que la foto corrige al llegar.
         var panelScreen: ScreenID?
+        /// `panelScreen` salió de la foto vieja y la primera foto de la sesión la puede cambiar.
+        var isPanelScreenProvisional = false
         /// Lo que muestra el Window Switcher, o nil si no está visible.
         private var shown: SwitcherContent?
         /// Ítems de la Switch Session.
@@ -528,6 +532,10 @@ public struct SwitcherCore: Sendable {
         case .activationDelayElapsed:
             guard var session = next.session else { return (next, []) }
             session.delayElapsed = true
+            if session.panelScreen == nil {
+                session.panelScreen = provisionalPanelScreen(next)
+                session.isPanelScreenProvisional = true
+            }
             let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
@@ -573,7 +581,10 @@ public struct SwitcherCore: Sendable {
             next.recency += unknown.map(\.id)
             guard var session = next.session else { return (next, []) }
             session.replaceItems(with: items(next, session.scope), current: next.current)
-            session.panelScreen = session.panelScreen ?? panelScreen(of: snapshot, config: next.config)
+            if session.panelScreen == nil || session.isPanelScreenProvisional {
+                session.panelScreen = panelScreen(of: snapshot, config: next.config)
+                session.isPanelScreenProvisional = false
+            }
             let effects = session.syncSwitcher(with: next.snapshot)
             next.session = session
             return (next, effects)
@@ -602,6 +613,19 @@ public struct SwitcherCore: Sendable {
         case .mouse: snapshot.screens.mouse
         case .primary: snapshot.screens.primary
         case .focusedWindow: snapshot.currentScreen
+        }
+    }
+
+    /// Pantalla del Window Switcher cuando la foto de la Switch Session todavía no llegó: la de la
+    /// foto vieja, salvo que con `.focusedWindow` los cambios de foco digan otra cosa (son más
+    /// recientes que la foto). Si la Window con foco no está en la foto vieja, la de la foto vieja.
+    private static func provisionalPanelScreen(_ state: SwitcherState) -> ScreenID {
+        let snapshot = state.snapshot
+        guard state.config.panelScreen == .focusedWindow else { return panelScreen(of: snapshot, config: state.config) }
+        switch state.current {
+        case .window(let id): return snapshot.windowsByID[id]?.screen ?? snapshot.currentScreen
+        case .none: return snapshot.screens.mouse
+        case .unknown: return snapshot.currentScreen
         }
     }
 

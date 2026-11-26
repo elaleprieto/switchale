@@ -100,14 +100,46 @@ struct MultiScreenTests {
         #expect(shownContent(effects) == nil)
     }
 
-    @Test("El panel no aparece en la pantalla de una foto vieja: espera la foto de la Switch Session")
-    func panelWaitsForFreshSnapshot() {
+    @Test("Si la foto de la Switch Session no llegó al vencer el Activation Delay, el panel aparece igual")
+    func panelDoesNotWaitForFreshSnapshot() {
+        var c = SwitcherCore()
+        _ = c.send(.snapshot(snapshot(windows, focused: 1)))
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(shownContent(c.send(.activationDelayElapsed))?.screen == mainScreen)
+    }
+
+    @Test("Sin la foto de la Switch Session, la pantalla sale de la Window con foco según los cambios de foco")
+    func provisionalScreenFollowsFocusEvents() {
+        var c = SwitcherCore()
+        _ = c.send(.snapshot(snapshot(windows, focused: 1)))  // foto vieja: foco en la principal
+        _ = c.send(.windowFocused(WindowID(2)))  // después el foco pasó a la otra pantalla
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(shownContent(c.send(.activationDelayElapsed))?.screen == otherScreen)
+    }
+
+    @Test("Sin la foto de la Switch Session y sin Window con foco, el panel aparece en la pantalla del mouse")
+    func provisionalScreenWithoutFocusedWindow() {
+        var c = SwitcherCore()
+        _ = c.send(.snapshot(snapshot(windows, focused: 1, mouse: otherScreen)))
+        _ = c.send(.windowFocused(WindowID(1)))
+        _ = c.send(.appActivated(AppID(2)))  // una App sin Window con foco (p. ej. el escritorio)
+        _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
+        #expect(shownContent(c.send(.activationDelayElapsed))?.screen == otherScreen)
+    }
+
+    @Test("La foto de la Switch Session corrige la pantalla del panel que apareció sin ella")
+    func freshSnapshotCorrectsProvisionalScreen() {
         var c = SwitcherCore()
         _ = c.send(.snapshot(snapshot(windows, focused: 2)))  // foto vieja: foco en otra pantalla
         _ = c.send(.keyDown(.tab, [.command], isRepeat: false))
-        #expect(shownContent(c.send(.activationDelayElapsed)) == nil)
+        #expect(shownContent(c.send(.activationDelayElapsed))?.screen == otherScreen)
+
         let fresh = c.send(.snapshot(snapshot(windows, focused: 1)))
-        #expect(shownContent(fresh)?.screen == mainScreen)
+        #expect(fresh.contains { if case .updateSwitcher(let content) = $0 { content.screen == mainScreen } else { false } })
+
+        // Corregida una vez, queda fija hasta que termine la Switch Session.
+        let later = c.send(.snapshot(snapshot(windows, focused: 2)))
+        for case .updateSwitcher(let content) in later { #expect(content.screen == mainScreen) }
     }
 
     @Test("La pantalla del panel se decide de nuevo en cada Switch Session")
