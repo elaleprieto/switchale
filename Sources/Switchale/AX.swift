@@ -21,10 +21,28 @@ func axWindowID(_ element: AXUIElement) -> WindowID? {
     return WindowID(Int(id))
 }
 
-/// Elemento AX de una App con timeout corto, para que una App colgada no bloquee al switcher.
+/// Timeout de cada consulta AX: una App colgada no puede bloquear al switcher.
+private let axMessagingTimeout: Float = 0.25
+
+/// Elemento AX de una App con timeout corto.
 func axApplicationElement(pid: pid_t) -> AXUIElement {
     let element = AXUIElementCreateApplication(pid)
-    AXUIElementSetMessagingTimeout(element, 0.25)
+    AXUIElementSetMessagingTimeout(element, axMessagingTimeout)
+    return element
+}
+
+/// Las Windows que lista AX para esta App, cada una con timeout corto: el timeout del elemento de
+/// la App no pasa a los elementos que devuelve, que usarían el del sistema (unos 6 s).
+func axWindowElements(of app: AXUIElement) -> [AXUIElement]? {
+    guard let windows = axAttribute(app, kAXWindowsAttribute) as? [AXUIElement] else { return nil }
+    for window in windows { AXUIElementSetMessagingTimeout(window, axMessagingTimeout) }
+    return windows
+}
+
+/// El mismo elemento con el timeout del sistema, para actuar sobre él: activar o cerrar una
+/// Window de una App que tarda no tiene que fallar por el timeout corto de la foto.
+func axWithDefaultTimeout(_ element: AXUIElement) -> AXUIElement {
+    AXUIElementSetMessagingTimeout(element, 0)
     return element
 }
 

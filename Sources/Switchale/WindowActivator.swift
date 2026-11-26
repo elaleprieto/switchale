@@ -21,8 +21,9 @@ struct WindowActivator {
         guard !app.isTerminated else { return false }
         switch handle.location {
         case .currentSpace(let element):
-            return activate(element, of: app)
+            return activate(axWithDefaultTimeout(element), of: app)
         case .otherSpace(let element):
+            let element = element.map(axWithDefaultTimeout)
             if activateInOtherSpace(handle, element: element) { return true }
             // Si `Spaces` falló, como si la opción estuviera desactivada: por AX, si AX la lista.
             guard let element else { return false }
@@ -148,7 +149,7 @@ struct WindowActivator {
         case .currentSpace(let element): element
         case .otherSpace(let element): element
         }
-        guard let element,
+        guard let element = element.map(axWithDefaultTimeout),
               let button = axAttribute(element, kAXCloseButtonAttribute),
               CFGetTypeID(button) == AXUIElementGetTypeID()
         else { return }

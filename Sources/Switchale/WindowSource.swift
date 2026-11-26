@@ -122,7 +122,7 @@ final class WindowSource {
             let appID = AppID(pid: app.processIdentifier)
             apps.append(AppInfo(id: appID, name: app.localizedName ?? ""))
             let appElement = axApplicationElement(pid: app.processIdentifier)
-            let axWindows = axAttribute(appElement, kAXWindowsAttribute) as? [AXUIElement]
+            let axWindows = axWindowElements(of: appElement)
             var appWindows: [AppWindow] = []
             defer {
                 byApp[app.processIdentifier] = appWindows
